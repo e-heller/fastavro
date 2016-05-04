@@ -15,7 +15,7 @@ try:
     from fastavro._schema import extract_named_schemas_into_repo,\
         extract_record_type
 except ImportError:
-    from fastavro.six import MemoryIO, xrange, btou, utob, iteritems
+    from fastavro.compat import MemoryIO, xrange, btou, utob, iteritems
     from fastavro.schema import extract_named_schemas_into_repo,\
         extract_record_type
 

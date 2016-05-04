@@ -1,6 +1,6 @@
 import fastavro
 
-from fastavro.six import MemoryIO
+from fastavro.compat import MemoryIO
 from os.path import join, abspath, dirname, basename
 from glob import iglob
 

@@ -1,5 +1,5 @@
 import fastavro as avro
-from fastavro.six import json_dump
+from fastavro.compat import json_dump
 from sys import stdout
 
 encoding = stdout.encoding or "UTF-8"

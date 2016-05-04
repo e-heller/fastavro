@@ -12,7 +12,7 @@ try:
     from fastavro._schema import extract_named_schemas_into_repo,\
         extract_record_type
 except ImportError:
-    from fastavro.six import utob, MemoryIO, long, is_str, iteritems
+    from fastavro.compat import utob, MemoryIO, long, is_str, iteritems
     from fastavro.reader import HEADER_SCHEMA, SYNC_SIZE, MAGIC
     from fastavro.schema import extract_named_schemas_into_repo,\
         extract_record_type
