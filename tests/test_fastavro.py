@@ -1,3 +1,6 @@
+# -*- coding: utf-8 -*-
+"""Tests for fastavro"""
+
 import fastavro
 
 from fastavro.compat import MemoryIO
@@ -83,7 +86,7 @@ def test_not_avro():
 
 def test_acquaint_schema_rejects_undleclared_name():
     try:
-        fastavro.schema.acquaint_schema({
+        fastavro.acquaint_schema({
             "type": "record",
             "fields": [{
                 "name": "left",
@@ -91,13 +94,13 @@ def test_acquaint_schema_rejects_undleclared_name():
             }]
         })
         assert False, 'Never raised'
-    except fastavro.schema.UnknownType as e:
+    except fastavro.UnknownType as e:
         assert 'Thinger' == e.name
 
 
 def test_acquaint_schema_rejects_unordered_references():
     try:
-        fastavro.schema.acquaint_schema({
+        fastavro.acquaint_schema({
             "type": "record",
             "fields": [{
                 "name": "left",
@@ -115,12 +118,12 @@ def test_acquaint_schema_rejects_unordered_references():
             }]
         })
         assert False, 'Never raised'
-    except fastavro.schema.UnknownType as e:
+    except fastavro.UnknownType as e:
         assert 'Thinger' == e.name
 
 
 def test_acquaint_schema_accepts_nested_namespaces():
-    fastavro.schema.acquaint_schema({
+    fastavro.acquaint_schema({
         "namespace": "com.example",
         "name": "Outer",
         "type": "record",
@@ -148,7 +151,7 @@ def test_acquaint_schema_accepts_nested_namespaces():
 
 
 def test_acquaint_schema_resolves_references_from_unions():
-    fastavro.schema.acquaint_schema({
+    fastavro.acquaint_schema({
         "namespace": "com.other",
         "name": "Outer",
         "type": "record",
@@ -174,7 +177,7 @@ def test_acquaint_schema_resolves_references_from_unions():
 
 
 def test_acquaint_schema_accepts_nested_records_from_arrays():
-    fastavro.schema.acquaint_schema({
+    fastavro.acquaint_schema({
         "fields": [
             {
                 "type": {
@@ -546,7 +549,7 @@ def test_schema_migration_union_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-    except fastavro._reader.SchemaResolutionError:
+    except fastavro.SchemaResolutionError:
         pass
     else:
         assert False
@@ -582,7 +585,7 @@ def test_schema_migration_array_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-    except fastavro._reader.SchemaResolutionError:
+    except fastavro.SchemaResolutionError:
         pass
     else:
         assert False
@@ -618,7 +621,7 @@ def test_schema_migration_maps_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-    except fastavro._reader.SchemaResolutionError:
+    except fastavro.SchemaResolutionError:
         pass
     else:
         assert False
@@ -644,7 +647,7 @@ def test_schema_migration_enum_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-    except fastavro._reader.SchemaResolutionError:
+    except fastavro.SchemaResolutionError:
         pass
     else:
         assert False
@@ -672,7 +675,7 @@ def test_schema_migration_schema_mismatch():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-    except fastavro._reader.SchemaResolutionError:
+    except fastavro.SchemaResolutionError:
         pass
     else:
         assert False
