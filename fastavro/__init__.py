@@ -75,6 +75,9 @@ dump = _writer.write_data
 acquaint_schema = _acquaint_schema
 _schema.acquaint_schema = _acquaint_schema
 
+UnknownType = _schema.UnknownType
+SchemaResolutionError = _reader.SchemaResolutionError
+
 __all__ = [
     n for n in locals().keys() if not n.startswith('_')
 ] + ['__version__']
