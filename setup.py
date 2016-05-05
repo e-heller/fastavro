@@ -60,7 +60,7 @@ else:
 # See https://bitbucket.org/pypy/pypy/issue/1770
 ext_modules = [
     extension('reader'),
-    extension('six'),
+    extension('compat'),
     extension('writer'),
     extension('schema'),
 ]
