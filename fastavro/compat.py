@@ -1,67 +1,79 @@
+# -*- coding: utf-8 -*-
 # cython: auto_cpdef=True
+"""Compatiblity for Python versions"""
 
-'''Compatiblity for Python versions.
 
-Some of this code is "lifted" from CherryPy.
-'''
+# Some of this code is adapted from `CherryPy`:
+#   https://bitbucket.org/cherrypy/cherrypy/wiki/Home
+#   Licensed under a BSD License:
+#   https://bitbucket.org/cherrypy/cherrypy/src/tip/cherrypy/LICENSE.txt
+
+# Some of this code is adapted from `six`:
+#   https://bitbucket.org/gutworth/six
+#   Licensed under a MIT License:
+#   https://bitbucket.org/gutworth/six/src/tip/LICENSE
+
+
+from __future__ import absolute_import
+
 import sys
-import json
-from sys import stdout
 
-_encoding = 'UTF-8'
 
-if sys.version_info >= (3, 0):
-    from io import BytesIO as MemoryIO
+# Python version
+PY2 = sys.version_info[0] == 2
+PY3 = sys.version_info[0] == 3
+
+
+if PY3:
+    # Python 3 type aliases
+    _unicode_type = str
+    _bytes_type = bytes
+    _string_types = (bytes, str)
+    _int_types = (int,)
+    _number_types = (int, float)
+    _unicode = str
+
+    from io import BytesIO  # flake8: noqa
     xrange = range
 
-    def py3_btou(n, encoding=_encoding):
-        return n.decode(encoding)
+    def py3_btou(byte_str):
+        return byte_str.decode('utf-8')
 
-    def py3_utob(n, encoding=_encoding):
-        return bytes(n, encoding)
-
-    def py3_json_dump(obj, indent):
-        json.dump(obj, stdout, indent=indent)
+    def py3_utob(unicode_str):
+        return bytes(unicode_str, 'utf-8')
 
     def py3_iteritems(obj):
-        return obj.items()
+        return iter(obj.items())
 
-    def py3_is_str(obj):
-        return isinstance(obj, (bytes, str,))
+else:
+    # Python 2 type aliases
+    _unicode_type = unicode
+    _bytes_type = str
+    _string_types = (basestring,)
+    _int_types = (int, long)
+    _number_types = (int, long, float)
+    _unicode = unicode
 
-else:  # Python 2x
-    from cStringIO import StringIO as MemoryIO  # flake8: noqa
+    from cStringIO import StringIO as BytesIO  # flake8: noqa
     xrange = xrange
 
-    def py2_btou(n, encoding=_encoding):
-        return unicode(n, encoding) # flake8: noqa
+    def py2_btou(byte_str):
+        return unicode(byte_str, 'utf-8')
 
-    def py2_utob(n, encoding=_encoding):
-        return n.encode(encoding)
-
-    _outenc = getattr(stdout, 'encoding', None) or _encoding
-
-    def py2_json_dump(obj, indent):
-        json.dump(obj, stdout, indent=indent, encoding=_outenc)
+    def py2_utob(unicode_str):
+        return unicode_str.encode('utf-8')
 
     def py2_iteritems(obj):
         return obj.iteritems()
 
-    def py2_is_str(obj):
-        return isinstance(obj, basestring) # flake8: noqa
 
-# We do it this way and not just redifine function since Cython do not like it
-if sys.version_info >= (3, 0):
+# Export an alias for each of the version-specific functions
+# We do it this way because Cython does not like redefined functions.
+if PY3:
     btou = py3_btou
     utob = py3_utob
-    json_dump = py3_json_dump
-    long = int
     iteritems = py3_iteritems
-    is_str = py3_is_str
 else:
     btou = py2_btou
     utob = py2_utob
-    json_dump = py2_json_dump
     iteritems = py2_iteritems
-    long = long
-    is_str = py2_is_str

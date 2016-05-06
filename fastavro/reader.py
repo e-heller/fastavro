@@ -1,5 +1,5 @@
+# -*- coding: utf-8 -*-
 # cython: auto_cpdef=True
-
 """Python code for reading AVRO files"""
 
 # This code is a modified version of the code at
@@ -11,55 +11,17 @@ from struct import unpack, error as StructError
 from zlib import decompress
 
 try:
-    from fastavro._six import MemoryIO, xrange, btou, utob, iteritems
-    from fastavro._schema import extract_named_schemas_into_repo,\
-        extract_record_type
+    from fastavro._compat import BytesIO, xrange, btou, iteritems
+    from fastavro._schema import (
+        extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
+        SYNC_SIZE, PRIMITIVE_TYPES, AVRO_TYPES,
+    )
 except ImportError:
-    from fastavro.compat import MemoryIO, xrange, btou, utob, iteritems
-    from fastavro.schema import extract_named_schemas_into_repo,\
-        extract_record_type
-
-VERSION = 1
-MAGIC = b'Obj' + utob(chr(VERSION))
-SYNC_SIZE = 16
-HEADER_SCHEMA = {
-    'type': 'record',
-    'name': 'org.apache.avro.file.Header',
-    'fields': [
-        {
-            'name': 'magic',
-            'type': {'type': 'fixed', 'name': 'magic', 'size': len(MAGIC)},
-            },
-        {
-            'name': 'meta',
-            'type': {'type': 'map', 'values': 'bytes'}
-            },
-        {
-            'name': 'sync',
-            'type': {'type': 'fixed', 'name': 'sync', 'size': SYNC_SIZE}
-            },
-    ]
-}
-MASK = 0xFF
-AVRO_TYPES = set([
-    'boolean',
-    'bytes',
-    'double',
-    'float',
-    'int',
-    'long',
-    'null',
-    'string',
-    'fixed',
-    'enum',
-    'record',
-    'error',
-    'array',
-    'map',
-    'union',
-    'request',
-    'error_union'
-])
+    from fastavro.compat import BytesIO, xrange, btou, iteritems
+    from fastavro.schema import (
+        extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
+        SYNC_SIZE, PRIMITIVE_TYPES, AVRO_TYPES,
+    )
 
 
 class SchemaResolutionError(Exception):
@@ -72,9 +34,9 @@ def match_types(writer_type, reader_type):
     if writer_type == reader_type:
         return True
     # promotion cases
-    elif writer_type == 'int' and reader_type in ['long', 'float', 'double']:
+    elif writer_type == 'int' and reader_type in ('long', 'float', 'double'):
         return True
-    elif writer_type == 'long' and reader_type in ['float', 'double']:
+    elif writer_type == 'long' and reader_type in ('float', 'double'):
         return True
     elif writer_type == 'float' and reader_type == 'double':
         return True
@@ -159,7 +121,6 @@ def read_float(fo, writer_schema=None, reader_schema=None):
     The float is converted into a 32-bit integer using a method equivalent to
     Java's floatToIntBits and then encoded in little-endian format.
     """
-
     return unpack('<f', fo.read(4))[0]
 
 
@@ -182,7 +143,7 @@ def read_utf8(fo, writer_schema=None, reader_schema=None):
     """A string is encoded as a long followed by that many bytes of UTF-8
     encoded character data.
     """
-    return btou(read_bytes(fo), 'utf-8')
+    return btou(read_bytes(fo))
 
 
 def read_fixed(fo, writer_schema, reader_schema=None):
@@ -347,6 +308,7 @@ def read_record(fo, writer_schema, reader_schema=None):
 
     return record
 
+
 READERS = {
     'null': read_null,
     'boolean': read_boolean,
@@ -368,16 +330,7 @@ READERS = {
 }
 
 
-SCHEMA_DEFS = {
-    'boolean': 'boolean',
-    'bytes': 'bytes',
-    'double': 'double',
-    'float': 'float',
-    'int': 'int',
-    'long': 'long',
-    'null': 'null',
-    'string': 'string',
-}
+SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
 
 
 def read_data(fo, writer_schema, reader_schema=None):
@@ -409,7 +362,7 @@ def deflate_read_block(fo):
     data = read_bytes(fo, None)
     # -15 is the log of the window size; negative indicates "raw" (no
     # zlib headers) decompression.  See zlib.h.
-    return MemoryIO(decompress(data, -15))
+    return BytesIO(decompress(data, -15))
 
 BLOCK_READERS = {
     'null': null_read_block,
@@ -423,7 +376,7 @@ try:
         length = read_long(fo, None)
         data = fo.read(length - 4)
         fo.read(4)  # CRC
-        return MemoryIO(snappy.decompress(data))
+        return BytesIO(snappy.decompress(data))
 
     BLOCK_READERS['snappy'] = snappy_read_block
 except ImportError:

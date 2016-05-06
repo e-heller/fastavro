@@ -1,9 +1,9 @@
-from io import BytesIO
 from os import SEEK_SET
 from random import choice, seed
 from string import ascii_uppercase, digits
 
 import fastavro
+from fastavro.compat import BytesIO
 
 letters = ascii_uppercase + digits
 id_size = 100

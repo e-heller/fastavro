@@ -1,5 +1,5 @@
+# -*- coding: utf-8 -*-
 # cython: auto_cpdef=True
-
 """Python code for writing AVRO files"""
 
 # This code is a modified version of the code at
@@ -7,15 +7,23 @@
 # Apache 2.0 license (http://www.apache.org/licenses/LICENSE-2.0)
 
 try:
-    from fastavro._six import utob, MemoryIO, long, is_str, iteritems
-    from fastavro._reader import HEADER_SCHEMA, SYNC_SIZE, MAGIC
-    from fastavro._schema import extract_named_schemas_into_repo,\
-        extract_record_type
+    from fastavro._compat import (
+        BytesIO, utob, iteritems, _int_types, _number_types, _unicode_type,
+        _bytes_type, _string_types,
+    )
+    from fastavro._schema import (
+        extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
+        SYNC_SIZE, SYNC_INTERVAL, MAGIC, PRIMITIVE_TYPES,
+    )
 except ImportError:
-    from fastavro.compat import utob, MemoryIO, long, is_str, iteritems
-    from fastavro.reader import HEADER_SCHEMA, SYNC_SIZE, MAGIC
-    from fastavro.schema import extract_named_schemas_into_repo,\
-        extract_record_type
+    from fastavro.compat import (
+        BytesIO, utob, iteritems, _int_types, _number_types, _unicode_type,
+        _bytes_type, _string_types,
+    )
+    from fastavro.schema import (
+        extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
+        SYNC_SIZE, SYNC_INTERVAL, MAGIC, PRIMITIVE_TYPES,
+    )
 
 try:
     import simplejson as json
@@ -77,7 +85,8 @@ def write_bytes(fo, datum, schema=None):
 def write_utf8(fo, datum, schema=None):
     """A string is encoded as a long followed by that many bytes of UTF-8
     encoded character data."""
-    write_bytes(fo, utob(datum))
+    byte_str = utob(datum) if isinstance(datum, _unicode_type) else datum
+    write_bytes(fo, byte_str)
 
 
 def write_crc32(fo, bytes):
@@ -155,25 +164,25 @@ def validate(datum, schema):
         return isinstance(datum, bool)
 
     if record_type == 'string':
-        return is_str(datum)
+        return isinstance(datum, _string_types)
 
     if record_type == 'bytes':
-        return isinstance(datum, bytes)
+        return isinstance(datum, _bytes_type)
 
     if record_type == 'int':
         return (
-            isinstance(datum, (int, long,)) and
+            isinstance(datum, _int_types) and
             INT_MIN_VALUE <= datum <= INT_MAX_VALUE
         )
 
     if record_type == 'long':
         return (
-            isinstance(datum, (int, long,)) and
+            isinstance(datum, _int_types) and
             LONG_MIN_VALUE <= datum <= LONG_MAX_VALUE
         )
 
     if record_type in ['float', 'double']:
-        return isinstance(datum, (int, long, float))
+        return isinstance(datum, _number_types)
 
     if record_type == 'fixed':
         return isinstance(datum, bytes) and len(datum) == schema['size']
@@ -194,7 +203,7 @@ def validate(datum, schema):
     if record_type == 'map':
         return (
             isinstance(datum, Mapping) and
-            all(is_str(k) for k in datum.keys()) and
+            all(isinstance(k, _string_types) for k in datum.keys()) and
             all(validate(v, schema['values']) for v in datum.values())
         )
 
@@ -261,18 +270,8 @@ WRITERS = {
     'error': write_record,
 }
 
-_base_types = [
-    'boolean',
-    'bytes',
-    'double',
-    'float',
-    'int',
-    'long',
-    'null',
-    'string',
-]
 
-SCHEMA_DEFS = dict((typ, typ) for typ in _base_types)
+SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
 
 
 def write_data(fo, datum, schema):
@@ -293,8 +292,10 @@ def write_data(fo, datum, schema):
 def write_header(fo, metadata, sync_marker):
     header = {
         'magic': MAGIC,
-        'meta': dict([(key, utob(value)) for key, value in
-                      iteritems(metadata)]),
+        'meta': dict(
+            (k, utob(v) if isinstance(v, _unicode_type) else v)
+            for k, v in iteritems(metadata)
+        ),
         'sync': sync_marker
     }
     write_data(fo, header, HEADER_SCHEMA)
@@ -357,7 +358,7 @@ def writer(fo,
            schema,
            records,
            codec='null',
-           sync_interval=1000 * SYNC_SIZE,
+           sync_interval=SYNC_INTERVAL,
            metadata=None):
     """Write records to fo (stream) according to schema
 
@@ -403,7 +404,7 @@ def writer(fo,
     >>>     writer(out, schema, records)
     """
     sync_marker = urandom(SYNC_SIZE)
-    io = MemoryIO()
+    io = BytesIO()
     block_count = 0
     metadata = metadata or {}
     metadata['avro.codec'] = codec

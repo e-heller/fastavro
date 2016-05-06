@@ -3,7 +3,7 @@
 
 import fastavro
 
-from fastavro.compat import MemoryIO
+from fastavro.compat import BytesIO
 from os.path import join, abspath, dirname, basename
 from glob import iglob
 
@@ -21,12 +21,12 @@ NO_DATA = set([
 ])
 
 
-class NoSeekMemoryIO(object):
-    """Shim around MemoryIO which blocks access to everything but read.
+class NoSeekBytesIO(object):
+    """Shim around BytesIO which blocks access to everything but read.
     Used to ensure seek API isn't being depended on."""
 
     def __init__(self, *args):
-        self.underlying = MemoryIO(*args)
+        self.underlying = BytesIO(*args)
 
     def read(self, n):
         return self.underlying.read(n)
@@ -46,11 +46,11 @@ def check(filename):
         records = list(reader)
         assert len(records) > 0, 'no records found'
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     fastavro.writer(new_file, reader.schema, records, reader.codec)
     new_file_bytes = new_file.getvalue()
 
-    new_file = NoSeekMemoryIO(new_file_bytes)
+    new_file = NoSeekBytesIO(new_file_bytes)
     new_reader = fastavro.reader(new_file)
     assert hasattr(new_reader, 'schema'), "schema wasn't written"
     assert new_reader.schema == reader.schema
@@ -60,7 +60,7 @@ def check(filename):
     assert new_records == records
 
     # Test schema migration with the same schema
-    new_file = NoSeekMemoryIO(new_file_bytes)
+    new_file = NoSeekBytesIO(new_file_bytes)
     schema_migration_reader = fastavro.reader(new_file, reader.schema)
     assert schema_migration_reader.reader_schema == reader.schema
     new_records = list(schema_migration_reader)
@@ -213,7 +213,7 @@ def test_schemaless_writer_and_reader():
         }]
     }
     record = {"field": "test"}
-    new_file = MemoryIO()
+    new_file = BytesIO()
     fastavro.schemaless_writer(new_file, schema, record)
     new_file.seek(0)
     new_record = fastavro.schemaless_reader(new_file, schema)
@@ -229,7 +229,7 @@ def test_default_values():
             "default": "default_value"
         }]
     }
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -247,14 +247,14 @@ def test_boolean_roundtrip():
         }]
     }
     record = {"field": True}
-    new_file = MemoryIO()
+    new_file = BytesIO()
     fastavro.schemaless_writer(new_file, schema, record)
     new_file.seek(0)
     new_record = fastavro.schemaless_reader(new_file, schema)
     assert record == new_record
 
     record = {"field": False}
-    new_file = MemoryIO()
+    new_file = BytesIO()
     fastavro.schemaless_writer(new_file, schema, record)
     new_file.seek(0)
     new_record = fastavro.schemaless_reader(new_file, schema)
@@ -267,7 +267,7 @@ def test_metadata():
         "fields": []
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{}]
     metadata = {'key': 'value'}
     fastavro.writer(new_file, schema, records, metadata=metadata)
@@ -293,7 +293,7 @@ def test_repo_caching_issue():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"b": {"c": "test"}}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -327,7 +327,7 @@ def test_repo_caching_issue():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"a": {"b": {"c": 1}}, "aa": {"b": {"c": 2}}}]
     fastavro.writer(new_file, other_schema, records)
     new_file.seek(0)
@@ -350,7 +350,7 @@ def test_schema_migration_remove_field():
         "fields": []
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{'test': 'test'}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -374,7 +374,7 @@ def test_schema_migration_add_default_field():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -400,7 +400,7 @@ def test_schema_migration_type_promotion():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": 1}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -432,7 +432,7 @@ def test_schema_migration_maps_with_union_promotion():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": {"foo": 1}}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -464,7 +464,7 @@ def test_schema_migration_array_with_union_promotion():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": [1, 2, 3]}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -490,7 +490,7 @@ def test_schema_migration_writer_union():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": 1}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -516,7 +516,7 @@ def test_schema_migration_reader_union():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": 1}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -542,7 +542,7 @@ def test_schema_migration_union_failure():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": True}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -578,7 +578,7 @@ def test_schema_migration_array_failure():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": [1, 2, 3]}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -614,7 +614,7 @@ def test_schema_migration_maps_failure():
         }]
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": {"foo": "a"}}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -640,7 +640,7 @@ def test_schema_migration_enum_failure():
         "symbols": ["BAZ", "BAR"],
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = ["FOO"]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -668,7 +668,7 @@ def test_schema_migration_schema_mismatch():
         "symbols": ["FOO", "BAR"],
     }
 
-    new_file = MemoryIO()
+    new_file = BytesIO()
     records = [{"test": "test"}]
     fastavro.writer(new_file, schema, records)
     new_file.seek(0)
@@ -682,7 +682,7 @@ def test_schema_migration_schema_mismatch():
 
 
 def test_empty():
-    io = MemoryIO()
+    io = BytesIO()
     schema = {
         'type': 'record',
         'name': 'test',
