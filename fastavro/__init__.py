@@ -75,7 +75,7 @@ acquaint_schema = _schema.acquaint_schema = _acquaint_schema
 
 
 # Reader API
-reader = iter_avro = _reader.iter_avro
+reader = iter_avro = _reader.Reader
 schemaless_reader = _reader.schemaless_reader
 load = _reader.read_data
 

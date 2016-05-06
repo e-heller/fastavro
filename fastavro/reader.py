@@ -421,27 +421,7 @@ def populate_schema_defs(schema, repo=None):
     )
 
 
-def _iter_avro(fo, header, codec, writer_schema, reader_schema):
-    """Return iterator over avro records."""
-    sync_marker = header['sync']
-    # Value in schema is bytes
-
-    read_block = BLOCK_READERS.get(codec)
-    if not read_block:
-        raise ValueError('Unrecognized codec: %r' % codec)
-
-    block_count = 0
-    while True:
-        block_count = read_long(fo, None)
-        block_fo = read_block(fo)
-
-        for i in xrange(block_count):
-            yield read_data(block_fo, writer_schema, reader_schema)
-
-        skip_sync(fo, sync_marker)
-
-
-class iter_avro:
+class Reader(object):
     """Creates a reader as an iterator over the records in the Avro file"""
 
     def __init__(self, fo, reader_schema=None):
@@ -466,31 +446,54 @@ class iter_avro:
         try:
             self._header = read_data(fo, HEADER_SCHEMA)
         except StopIteration:
-            raise ValueError('Cannot read header - is it an avro file?')
+            raise ValueError('Failed to read Avro header')
+
+        self.sync_marker = self._header['sync']
 
         # `meta` values are bytes. So, the actual decoding has to be external.
-        self.metadata = \
-            dict((k, btou(v)) for k, v in iteritems(self._header['meta']))
+        self.metadata = dict(
+            (k, btou(v)) for k, v in iteritems(self._header['meta'])
+        )
 
-        self.schema = self.writer_schema = \
+        self.schema = self.writer_schema = (
             json.loads(self.metadata['avro.schema'])
+        )
         self.codec = self.metadata.get('avro.codec', 'null')
         self.reader_schema = reader_schema
+
+        self.read_block = BLOCK_READERS.get(self.codec)
+        if not self.read_block:
+            raise ValueError('Unrecognized codec: %r' % self.codec)
 
         acquaint_schema(self.writer_schema, READERS)
         if reader_schema:
             populate_schema_defs(reader_schema, SCHEMA_DEFS)
-        self._records = _iter_avro(fo,
-                                   self._header,
-                                   self.codec,
-                                   self.writer_schema,
-                                   reader_schema)
+
+        self.records = self._record_iterator()
 
     def __iter__(self):
-        return self._records
+        return self.records
 
     def next(self):
-        return next(self._records)
+        return next(self.records)
+
+    def _record_iterator(self):
+        """Returns an iterator over the records in the Avro file"""
+        writer_schema = self.writer_schema
+        reader_schema = self.reader_schema
+
+        while True:
+            block_count = read_long(self.fo, None)
+            block = self.read_block(self.fo)
+
+            for i in xrange(block_count):
+                yield read_data(block, writer_schema, reader_schema)
+
+            skip_sync(self.fo, self.sync_marker)
+
+
+# For backwards compatability
+iter_avro = Reader
 
 
 def schemaless_reader(fo, schema):
