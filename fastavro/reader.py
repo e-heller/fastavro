@@ -2,9 +2,16 @@
 # cython: auto_cpdef=True
 """Python code for reading AVRO files"""
 
-# This code is a modified version of the code at
-# http://svn.apache.org/viewvc/avro/trunk/lang/py/src/avro/ which is under
-# Apache 2.0 license (http://www.apache.org/licenses/LICENSE-2.0)
+
+# This code is based on the Apache 'avro' pacakge, found at:
+# http://svn.apache.org/viewvc/avro/trunk/lang/py/src/avro/
+# Under the Apache 2.0 License (https://www.apache.org/licenses/LICENSE-2.0)
+
+# Please refer to the Avro specification page for details on data encoding:
+#   https://avro.apache.org/docs/1.8.0/spec.html
+
+
+from __future__ import absolute_import
 
 import json
 from struct import unpack, error as StructError
