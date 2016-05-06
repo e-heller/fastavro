@@ -18,7 +18,7 @@ from __future__ import absolute_import
 MAGIC = b'Obj\x01'
 
 SYNC_SIZE = 16
-SYNC_INTERVAL = 1000 * SYNC_SIZE
+SYNC_INTERVAL = 4000 * SYNC_SIZE
 
 
 # Avro Header schema
