@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 '''Fast Avro file iteration.
 
 Most of the code here is ripped off the Python avro package. It's missing a lot
@@ -42,6 +43,9 @@ The only onterface function is iter_avro, example usage::
         writer(out, schema, records)
 '''
 
+from __future__ import absolute_import
+
+
 __version__ = '0.9.9'
 
 
@@ -66,17 +70,30 @@ def _acquaint_schema(schema):
     _reader.acquaint_schema(schema)
     _writer.acquaint_schema(schema)
 
+
+acquaint_schema = _schema.acquaint_schema = _acquaint_schema
+
+
+# Reader API
 reader = iter_avro = _reader.iter_avro
 schemaless_reader = _reader.schemaless_reader
 load = _reader.read_data
+
+# Writer API
 writer = _writer.writer
 schemaless_writer = _writer.schemaless_writer
 dump = _writer.write_data
-acquaint_schema = _acquaint_schema
-_schema.acquaint_schema = _acquaint_schema
 
+# Exceptions
 UnknownType = _schema.UnknownType
 SchemaResolutionError = _reader.SchemaResolutionError
+
+# Some useful constants
+PRIMITIVE_TYPES = _schema.PRIMITIVE_TYPES
+COMPLEX_TYPES = _schema.COMPLEX_TYPES
+AVRO_TYPES = _schema.AVRO_TYPES
+SYNC_INTERVAL = _schema.SYNC_INTERVAL
+
 
 __all__ = [
     n for n in locals().keys() if not n.startswith('_')
