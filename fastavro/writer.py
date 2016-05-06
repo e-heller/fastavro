@@ -13,6 +13,22 @@
 
 from __future__ import absolute_import
 
+from binascii import crc32
+from collections import Iterable, Mapping
+from os import urandom, SEEK_SET
+from struct import pack
+from zlib import compress
+
+try:
+    import simplejson as json
+except ImportError:
+    import json
+
+try:
+    import snappy
+except ImportError:
+    snappy = None
+
 try:
     from fastavro._compat import (
         BytesIO, utob, iteritems, _int_types, _number_types, _unicode_type,
@@ -31,19 +47,6 @@ except ImportError:
         extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
         SYNC_SIZE, SYNC_INTERVAL, MAGIC, PRIMITIVE_TYPES,
     )
-
-try:
-    import simplejson as json
-except ImportError:
-    import json
-
-from binascii import crc32
-from collections import Iterable, Mapping
-from os import urandom, SEEK_SET
-from struct import pack
-from zlib import compress
-
-NoneType = type(None)
 
 
 def write_null(fo, datum, schema=None):
@@ -324,26 +327,22 @@ def deflate_write_block(fo, block_bytes):
     fo.write(data)
 
 
+def snappy_write_block(fo, block_bytes):
+    """Write block in "snappy" codec."""
+    data = snappy.compress(block_bytes)
+
+    write_long(fo, len(data) + 4)  # for CRC
+    fo.write(data)
+    write_crc32(fo, block_bytes)
+
+
 BLOCK_WRITERS = {
     'null': null_write_block,
     'deflate': deflate_write_block
 }
 
-
-try:
-    import snappy
-
-    def snappy_write_block(fo, block_bytes):
-        """Write block in "snappy" codec."""
-        data = snappy.compress(block_bytes)
-
-        write_long(fo, len(data) + 4)  # for CRC
-        fo.write(data)
-        write_crc32(fo, block_bytes)
-
+if snappy:
     BLOCK_WRITERS['snappy'] = snappy_write_block
-except ImportError:
-    pass
 
 
 def acquaint_schema(schema, repo=None):
