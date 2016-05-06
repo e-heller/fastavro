@@ -13,9 +13,18 @@
 
 from __future__ import absolute_import
 
-import json
 from struct import unpack, error as StructError
 from zlib import decompress
+
+try:
+    import simplejson as json
+except ImportError:
+    import json
+
+try:
+    import snappy
+except ImportError:
+    snappy = None
 
 try:
     from fastavro._compat import BytesIO, xrange, btou, iteritems
@@ -349,45 +358,43 @@ def read_data(fo, writer_schema, reader_schema=None):
     try:
         return READERS[record_type](fo, writer_schema, reader_schema)
     except StructError:
-        raise EOFError('cannot read %s from %s' % (record_type, fo))
+        raise EOFError('Cannot read %s from %s' % (record_type, fo))
 
 
 def skip_sync(fo, sync_marker):
     """Skip an expected sync marker, complaining if it doesn't match"""
     if fo.read(SYNC_SIZE) != sync_marker:
-        raise ValueError('expected sync marker not found')
+        raise ValueError('Expected sync marker not found')
 
 
 def null_read_block(fo):
-    """Read block in "null" codec."""
+    """Read block in 'null' codec."""
     read_long(fo, None)
     return fo
 
 
 def deflate_read_block(fo):
-    """Read block in "deflate" codec."""
+    """Read block in 'deflate' codec."""
     data = read_bytes(fo, None)
     # -15 is the log of the window size; negative indicates "raw" (no
     # zlib headers) decompression.  See zlib.h.
     return BytesIO(decompress(data, -15))
+
+
+def snappy_read_block(fo):
+    length = read_long(fo, None)
+    data = fo.read(length - 4)
+    fo.read(4)  # CRC
+    return BytesIO(snappy.decompress(data))
+
 
 BLOCK_READERS = {
     'null': null_read_block,
     'deflate': deflate_read_block
 }
 
-try:
-    import snappy
-
-    def snappy_read_block(fo):
-        length = read_long(fo, None)
-        data = fo.read(length - 4)
-        fo.read(4)  # CRC
-        return BytesIO(snappy.decompress(data))
-
+if snappy:
     BLOCK_READERS['snappy'] = snappy_read_block
-except ImportError:
-    pass
 
 
 def acquaint_schema(schema,
@@ -435,10 +442,10 @@ def _iter_avro(fo, header, codec, writer_schema, reader_schema):
 
 
 class iter_avro:
-    """Iterator over avro file."""
+    """Creates a reader as an iterator over the records in the Avro file"""
 
     def __init__(self, fo, reader_schema=None):
-        """Creates a new iterator
+        """Creates a reader as an iterator over the records in the Avro file
 
         Paramaters
         ----------
@@ -459,7 +466,7 @@ class iter_avro:
         try:
             self._header = read_data(fo, HEADER_SCHEMA)
         except StopIteration:
-            raise ValueError('cannot read header - is it an avro file?')
+            raise ValueError('Cannot read header - is it an avro file?')
 
         # `meta` values are bytes. So, the actual decoding has to be external.
         self.metadata = \
