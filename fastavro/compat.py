@@ -33,7 +33,7 @@ if PY3:
     _number_types = (int, float)
     _unicode = str
 
-    from io import BytesIO  # flake8: noqa
+    from io import BytesIO  # noqa
     xrange = range
 
     def py3_btou(byte_str):
@@ -54,7 +54,7 @@ else:
     _number_types = (int, long, float)
     _unicode = unicode
 
-    from cStringIO import StringIO as BytesIO  # flake8: noqa
+    from cStringIO import StringIO as BytesIO  # noqa
     xrange = xrange
 
     def py2_btou(byte_str):
