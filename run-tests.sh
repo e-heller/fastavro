@@ -12,8 +12,13 @@ echo
 
 echo "running flake8"
 flake8 fastavro tests
+if [ $? -eq 0 ]
+then echo "OK"
+else echo "FAILED"
+fi
+echo
 
 nose=${nose-nosetests}
-echo "nose is $nose"
+echo "running $nose"
 
-$nose -vd $@ tests
+${nose} -vd $@ tests
