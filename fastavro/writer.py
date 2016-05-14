@@ -35,8 +35,8 @@ try:
         _bytes_type, _string_types,
     )
     from fastavro._schema import (
-        extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
-        SYNC_SIZE, SYNC_INTERVAL, MAGIC, PRIMITIVE_TYPES,
+        extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
+        SYNC_INTERVAL, PRIMITIVE_TYPES,
     )
 except ImportError:
     from fastavro.compat import (
@@ -44,8 +44,8 @@ except ImportError:
         _bytes_type, _string_types,
     )
     from fastavro.schema import (
-        extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
-        SYNC_SIZE, SYNC_INTERVAL, MAGIC, PRIMITIVE_TYPES,
+        extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
+        SYNC_INTERVAL, PRIMITIVE_TYPES,
     )
 
 
@@ -165,7 +165,12 @@ LONG_MAX_VALUE = (1 << 63) - 1
 def validate(datum, schema):
     """Determine if a python datum is an instance of a schema."""
 
-    record_type = extract_record_type(schema)
+    if isinstance(schema, dict):
+        record_type = schema['type']
+    elif isinstance(schema, list):
+        record_type = 'union'
+    else:
+        record_type = schema
 
     if record_type == 'null':
         return datum is None
@@ -296,7 +301,14 @@ def write_data(fo, datum, schema):
     schema: dict
         Schemda to use
     """
-    return WRITERS[extract_record_type(schema)](fo, datum, schema)
+    if isinstance(schema, dict):
+        record_type = schema['type']
+    elif isinstance(schema, list):
+        record_type = 'union'
+    else:
+        record_type = schema
+
+    return WRITERS[record_type](fo, datum, schema)
 
 
 def write_header(fo, metadata, sync_marker):

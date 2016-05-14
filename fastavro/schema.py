@@ -92,16 +92,6 @@ class UnknownType(Exception):
         self.name = name
 
 
-def extract_record_type(schema):
-    if isinstance(schema, dict):
-        return schema['type']
-
-    if isinstance(schema, list):
-        return 'union'
-
-    return schema
-
-
 def schema_name(schema, parent_ns):
     name = schema.get('name')
     if not name:

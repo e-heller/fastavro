@@ -29,14 +29,14 @@ except ImportError:
 try:
     from fastavro._compat import BytesIO, xrange, btou, iteritems
     from fastavro._schema import (
-        extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
-        SYNC_SIZE, PRIMITIVE_TYPES, AVRO_TYPES,
+        extract_named_schemas_into_repo, HEADER_SCHEMA, SYNC_SIZE,
+        PRIMITIVE_TYPES, AVRO_TYPES,
     )
 except ImportError:
     from fastavro.compat import BytesIO, xrange, btou, iteritems
     from fastavro.schema import (
-        extract_named_schemas_into_repo, extract_record_type, HEADER_SCHEMA,
-        SYNC_SIZE, PRIMITIVE_TYPES, AVRO_TYPES,
+        extract_named_schemas_into_repo, HEADER_SCHEMA, SYNC_SIZE,
+        PRIMITIVE_TYPES, AVRO_TYPES,
     )
 
 
@@ -352,7 +352,13 @@ SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
 def read_data(fo, writer_schema, reader_schema=None):
     """Read data from file object according to schema."""
 
-    record_type = extract_record_type(writer_schema)
+    if isinstance(writer_schema, dict):
+        record_type = writer_schema['type']
+    elif isinstance(writer_schema, list):
+        record_type = 'union'
+    else:
+        record_type = writer_schema
+
     if reader_schema and record_type in AVRO_TYPES:
         match_schemas(writer_schema, reader_schema)
     try:
