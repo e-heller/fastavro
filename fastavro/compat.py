@@ -36,12 +36,6 @@ if PY3:
     from io import BytesIO  # noqa
     xrange = range
 
-    def py3_btou(byte_str):
-        return byte_str.decode('utf-8')
-
-    def py3_utob(unicode_str):
-        return bytes(unicode_str, 'utf-8')
-
     def py3_iteritems(obj):
         return iter(obj.items())
 
@@ -57,12 +51,6 @@ else:
     from cStringIO import StringIO as BytesIO  # noqa
     xrange = xrange
 
-    def py2_btou(byte_str):
-        return unicode(byte_str, 'utf-8')
-
-    def py2_utob(unicode_str):
-        return unicode_str.encode('utf-8')
-
     def py2_iteritems(obj):
         return obj.iteritems()
 
@@ -70,10 +58,6 @@ else:
 # Export an alias for each of the version-specific functions
 # We do it this way because Cython does not like redefined functions.
 if PY3:
-    btou = py3_btou
-    utob = py3_utob
     iteritems = py3_iteritems
 else:
-    btou = py2_btou
-    utob = py2_utob
     iteritems = py2_iteritems

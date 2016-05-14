@@ -31,7 +31,7 @@ except ImportError:
 
 try:
     from fastavro._compat import (
-        BytesIO, utob, iteritems, _int_types, _number_types, _unicode_type,
+        BytesIO, iteritems, _int_types, _number_types, _unicode_type,
         _bytes_type, _string_types,
     )
     from fastavro._schema import (
@@ -40,7 +40,7 @@ try:
     )
 except ImportError:
     from fastavro.compat import (
-        BytesIO, utob, iteritems, _int_types, _number_types, _unicode_type,
+        BytesIO, iteritems, _int_types, _number_types, _unicode_type,
         _bytes_type, _string_types,
     )
     from fastavro.schema import (
@@ -95,7 +95,9 @@ def write_bytes(fo, datum, schema=None):
 def write_utf8(fo, datum, schema=None):
     """A string is encoded as a long followed by that many bytes of UTF-8
     encoded character data."""
-    byte_str = utob(datum) if isinstance(datum, _unicode_type) else datum
+    byte_str = (
+        datum.encode('utf-8') if isinstance(datum, _unicode_type) else datum
+    )
     write_bytes(fo, byte_str)
 
 
@@ -315,7 +317,7 @@ def write_header(fo, metadata, sync_marker):
     header = {
         'magic': MAGIC,
         'meta': dict(
-            (k, utob(v) if isinstance(v, _unicode_type) else v)
+            (k, v.encode('utf-8') if isinstance(v, _unicode_type) else v)
             for k, v in iteritems(metadata)
         ),
         'sync': sync_marker

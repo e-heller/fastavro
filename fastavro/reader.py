@@ -27,13 +27,13 @@ except ImportError:
     snappy = None
 
 try:
-    from fastavro._compat import BytesIO, xrange, btou, iteritems
+    from fastavro._compat import BytesIO, xrange, iteritems
     from fastavro._schema import (
         extract_named_schemas_into_repo, HEADER_SCHEMA, SYNC_SIZE,
         PRIMITIVE_TYPES, AVRO_TYPES,
     )
 except ImportError:
-    from fastavro.compat import BytesIO, xrange, btou, iteritems
+    from fastavro.compat import BytesIO, xrange, iteritems
     from fastavro.schema import (
         extract_named_schemas_into_repo, HEADER_SCHEMA, SYNC_SIZE,
         PRIMITIVE_TYPES, AVRO_TYPES,
@@ -159,7 +159,7 @@ def read_utf8(fo, writer_schema=None, reader_schema=None):
     """A string is encoded as a long followed by that many bytes of UTF-8
     encoded character data.
     """
-    return btou(read_bytes(fo))
+    return read_bytes(fo).decode('utf-8')
 
 
 def read_fixed(fo, writer_schema, reader_schema=None):
@@ -456,9 +456,9 @@ class Reader(object):
 
         self.sync_marker = self._header['sync']
 
-        # `meta` values are bytes. So, the actual decoding has to be external.
+        # Values in the `meta` dict are `bytes`, so decoding must be external.
         self.metadata = dict(
-            (k, btou(v)) for k, v in iteritems(self._header['meta'])
+            (k, v.decode('utf-8')) for k, v in iteritems(self._header['meta'])
         )
 
         self.schema = self.writer_schema = (
