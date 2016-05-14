@@ -14,6 +14,8 @@
 from __future__ import absolute_import
 
 
+# ---- Avro Header Specification ---------------------------------------------#
+
 # Magic bytes for Avro (version 1)
 MAGIC = b'Obj\x01'
 
@@ -40,8 +42,10 @@ HEADER_SCHEMA = {
 }
 
 
-# Avro Primitive types
-# see: https://avro.apache.org/docs/1.8.0/spec.html#schema_primitive
+# ---- Avro Types ------------------------------------------------------------#
+
+# Primitive types
+#   Ref: https://avro.apache.org/docs/1.8.0/spec.html#schema_primitive
 PRIMITIVE_TYPES = set([
     'boolean',
     'bytes',
@@ -53,8 +57,12 @@ PRIMITIVE_TYPES = set([
     'string',
 ])
 
-# Avro Complex types
-# see: https://avro.apache.org/docs/1.8.0/spec.html#schema_complex
+
+# Complex types
+#   Ref: https://avro.apache.org/docs/1.8.0/spec.html#schema_complex
+
+# Named complex types
+#   Ref: https://avro.apache.org/docs/1.8.0/spec.html#names
 NAMED_TYPES = set([
     'enum',
     'error',
@@ -62,6 +70,7 @@ NAMED_TYPES = set([
     'record',
 ])
 
+# Other complex types
 COMPLEX_TYPES = NAMED_TYPES | set([
     'array',
     'error_union',
@@ -70,9 +79,12 @@ COMPLEX_TYPES = NAMED_TYPES | set([
     'union',
 ])
 
+
 # All Avro types
 AVRO_TYPES = PRIMITIVE_TYPES | COMPLEX_TYPES
 
+
+# ---- Schema Handling -------------------------------------------------------#
 
 class UnknownType(Exception):
     def __init__(self, name):
