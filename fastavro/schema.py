@@ -8,7 +8,7 @@
 # Under the Apache 2.0 License (https://www.apache.org/licenses/LICENSE-2.0)
 
 # Please refer to the Avro specification page for details on data encoding:
-#   https://avro.apache.org/docs/1.8.0/spec.html
+#   https://avro.apache.org/docs/current/spec.html
 
 
 from __future__ import absolute_import
@@ -45,7 +45,7 @@ HEADER_SCHEMA = {
 # ---- Avro Types ------------------------------------------------------------#
 
 # Primitive types
-#   Ref: https://avro.apache.org/docs/1.8.0/spec.html#schema_primitive
+#   Ref: https://avro.apache.org/docs/current/spec.html#schema_primitive
 PRIMITIVE_TYPES = set([
     'boolean',
     'bytes',
@@ -59,10 +59,10 @@ PRIMITIVE_TYPES = set([
 
 
 # Complex types
-#   Ref: https://avro.apache.org/docs/1.8.0/spec.html#schema_complex
+#   Ref: https://avro.apache.org/docs/current/spec.html#schema_complex
 
 # Named complex types
-#   Ref: https://avro.apache.org/docs/1.8.0/spec.html#names
+#   Ref: https://avro.apache.org/docs/current/spec.html#names
 NAMED_TYPES = set([
     'enum',
     'error',
