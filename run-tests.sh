@@ -6,7 +6,7 @@
 # Exit on error
 set -e
 
-echo "[$(date +%Y%m%dT%H%M%S)] ${USER}@$(hostname) :: $(python --version)"
+echo "[$(date +%Y%m%dT%H%M%S)] ${USER}@$(hostname) :: $(python --version 2>&1)"
 echo
 
 
