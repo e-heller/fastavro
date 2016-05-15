@@ -14,7 +14,7 @@
 from __future__ import absolute_import
 
 import sys
-from struct import unpack, error as StructError
+from struct import unpack
 from zlib import decompress
 
 try:
@@ -45,6 +45,13 @@ except ImportError:
 
 class SchemaResolutionError(Exception):
     pass
+
+
+class ReadError(ValueError):
+    def __init__(self, msg, orig_exc=None):
+        ValueError.__init__(self, msg, orig_exc)
+        self.msg = msg
+        self.orig_exc = orig_exc
 
 
 # ---- Schema Resolution / Matching ------------------------------------------#
@@ -123,9 +130,8 @@ def read_long(fo, writer_schema=None, reader_schema=None):
     """int and long values are written using variable-length, zig-zag
     coding."""
     c = fo.read(1)
-    # We do EOF checking only here, since most reader start here
     if not c:
-        raise StopIteration
+        raise EOFError("Failed to read 'long' value")
     b = ord(c)
     n = b & 0x7F
     shift = 7
@@ -363,8 +369,12 @@ def read_data(fo, writer_schema, reader_schema=None):
         match_schemas(writer_schema, reader_schema)
     try:
         return READERS[record_type](fo, writer_schema, reader_schema)
-    except StructError:
-        raise EOFError('Cannot read %s from %s' % (record_type, fo))
+    except (SchemaResolutionError, ReadError):
+        raise
+    except Exception as exc:
+        raise ReadError(
+            'Failed to read %r type' % record_type, exc
+        )
 
 
 # ---- Block Decoders --------------------------------------------------------#
@@ -507,8 +517,8 @@ class Reader(object):
         """Read the Avro Header information"""
         try:
             self._header = read_data(self.fo, HEADER_SCHEMA)
-        except StopIteration:
-            raise ValueError('Failed to read Avro header')
+        except Exception as exc:
+            raise ReadError('Failed to read Avro header', exc)
 
         # Read `magic`
         self._magic = self._header['magic']
@@ -550,16 +560,20 @@ class Reader(object):
 
         block_buf = BytesIO()
 
-        while True:
-            block_count = read_long(fo)
-            read_block(fo, block_buf)
+        try:
+            while True:
+                block_count = read_long(fo)
+                read_block(fo, block_buf)
 
-            for i in xrange(block_count):
-                yield read_data(block_buf, writer_schema, reader_schema)
+                for i in xrange(block_count):
+                    yield read_data(block_buf, writer_schema, reader_schema)
 
-            skip_sync(fo, sync_marker)
+                skip_sync(fo, sync_marker)
 
-        block_buf.close()
+        except EOFError:
+            pass
+        finally:
+            block_buf.close()
 
 
 # For backwards compatability

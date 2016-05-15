@@ -167,7 +167,7 @@ def test_acquaint_schema_accepts_nested_namespaces():
             'type': 'com.example.Inner',
         }],
     })
-    assert 'com.example.Inner' in fastavro._writer.SCHEMA_DEFS
+    assert 'com.example.Inner' in fastavro._writer.get_schema_defs()
 
 
 def test_acquaint_schema_resolves_references_from_unions():
@@ -192,7 +192,8 @@ def test_acquaint_schema_resolves_references_from_unions():
             'type': ['null', 'Inner'],
         }],
     })
-    b_schema = fastavro._writer.SCHEMA_DEFS['com.other.Outer']['fields'][1]
+    schema_defs = fastavro._writer.get_schema_defs()
+    b_schema = schema_defs['com.other.Outer']['fields'][1]
     assert b_schema['type'][1] == 'com.other.Inner'
 
 
@@ -218,7 +219,7 @@ def test_acquaint_schema_accepts_nested_records_from_arrays():
             },
         }],
     })
-    assert 'Nested' in fastavro._writer.SCHEMA_DEFS
+    assert 'Nested' in fastavro._writer.get_schema_defs()
 
 
 def _check_exception(exc, substrs, quoted=False):
@@ -1026,11 +1027,11 @@ def test_empty():
     }
     try:
         fastavro.load(io, schema)
-        assert False, 'EOFError not raised: Read from an empty file'
-    except EOFError:
+        assert False, 'ReadError not raised: Read from an empty file'
+    except fastavro.ReadError:
         pass
     except Exception as exc:
-        assert False, 'Expected EOFError: %s raised instead' % type(exc)
+        assert False, 'Expected ReadError: %s raised instead' % type(exc)
 
 
 def test_fixed_roundtrip():

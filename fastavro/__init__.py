@@ -87,6 +87,7 @@ dump = _writer.write_data
 UnknownType = _schema.UnknownType
 SchemaError = _schema.SchemaError
 SchemaResolutionError = _reader.SchemaResolutionError
+ReadError = _reader.ReadError
 
 # Some useful constants
 PRIMITIVE_TYPES = _schema.PRIMITIVE_TYPES
