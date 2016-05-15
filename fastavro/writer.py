@@ -102,7 +102,7 @@ def write_bytes(fo, datum, schema=None):
     fo.write(datum)
 
 
-def write_utf8(fo, datum, schema=None):
+def write_string(fo, datum, schema=None):
     """A string is encoded as a long followed by that many bytes of UTF-8
     encoded character data."""
     byte_str = (
@@ -158,7 +158,7 @@ def write_map(fo, datum, schema):
         write_long(fo, len(datum))
         vtype = schema['values']
         for key, val in iteritems(datum):
-            write_utf8(fo, key)
+            write_string(fo, key)
             write_data(fo, val, vtype)
     write_long(fo, 0)
 
@@ -278,7 +278,7 @@ WRITERS = {
     'float': write_float,
     'double': write_double,
     'bytes': write_bytes,
-    'string': write_utf8,
+    'string': write_string,
 
     # Complex types
     'fixed': write_fixed,
