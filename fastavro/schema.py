@@ -13,6 +13,14 @@
 
 from __future__ import absolute_import
 
+import sys
+
+
+if sys.version_info[0] == 2:
+    _string_type = basestring
+else:
+    _string_type = str
+
 
 # ---- Avro Header Specification ---------------------------------------------#
 
@@ -91,6 +99,10 @@ class UnknownType(Exception):
         self.name = name
 
 
+class SchemaError(Exception):
+    pass
+
+
 def schema_name(schema, parent_ns):
     name = schema.get('name')
     if not name:
@@ -103,63 +115,86 @@ def schema_name(schema, parent_ns):
     return namespace, '%s.%s' % (namespace, name)
 
 
-def extract_named_schemas_into_repo(schema, repo, transformer, parent_ns=None):
-    if type(schema) == list:
-        for index, enum_schema in enumerate(schema):
-            namespaced_name = extract_named_schemas_into_repo(
-                enum_schema,
-                repo,
-                transformer,
-                parent_ns,
-            )
-            if namespaced_name:
-                schema[index] = namespaced_name
-        return
+def extract_named_schemas_into_repo(
+    schema, repo, transformer, parent_ns=None
+):
+    def resolve(schema_, parent_ns_):
+        return extract_named_schemas_into_repo(
+            schema_,
+            repo,
+            transformer,
+            parent_ns_,
+        )
 
-    if type(schema) != dict:
+    if isinstance(schema, _string_type):
         # If a reference to another schema is an unqualified name, but not one
         # of the primitive types, then we should add the current enclosing
         # namespace to reference name.
         if schema not in PRIMITIVE_TYPES and '.' not in schema and parent_ns:
             schema = parent_ns + '.' + schema
-
         if schema not in repo:
             raise UnknownType(schema)
         return schema
 
-    namespace, name = schema_name(schema, parent_ns)
+    elif isinstance(schema, list):
+        # A list indicates a 'union' schema
+        for index, union_schema in enumerate(schema):
+            namespaced_name = resolve(union_schema, parent_ns)
+            if namespaced_name:
+                schema[index] = namespaced_name
 
-    if name:
-        repo[name] = transformer(schema)
+    elif isinstance(schema, dict):
+        # A dict indicates one of: 'array', 'enum', 'fixed', 'map', 'record'
+        # These types require all require a 'type' attribute
+        check_schema_attrs(schema, 'type')
+        schema_type = schema['type']
+        namespace, name = schema_name(schema, parent_ns)
 
-    schema_type = schema.get('type')
-    if schema_type == 'array':
-        namespaced_name = extract_named_schemas_into_repo(
-            schema['items'],
-            repo,
-            transformer,
-            namespace,
+        # The Avro 'Named' types require a 'name' attribute
+        if schema_type in NAMED_TYPES:
+            check_schema_attrs(schema, 'name')
+            repo[name] = transformer(schema)
+
+        if schema_type == 'enum':
+            check_schema_attrs(schema, 'symbols')
+        elif schema_type == 'fixed':
+            check_schema_attrs(schema, 'size')
+
+        # Must recursively resolve namespaced names in these types:
+        elif schema_type == 'array':
+            check_schema_attrs(schema, 'items')
+            namespaced_name = resolve(schema['items'], namespace)
+            if namespaced_name:
+                schema['items'] = namespaced_name
+        elif schema_type == 'map':
+            check_schema_attrs(schema, 'values')
+            namespaced_name = resolve(schema['values'], namespace)
+            if namespaced_name:
+                schema['values'] = namespaced_name
+        elif schema_type in ('record', 'error'):
+            check_schema_attrs(schema, 'fields')
+            for field in schema['fields']:
+                check_sub_attrs(field, 'field', schema_type, ('name', 'type'))
+                namespaced_name = resolve(field['type'], namespace)
+                if namespaced_name:
+                    field['type'] = namespaced_name
+    else:
+        raise SchemaError('Unknown schema type: %r' % schema)
+
+
+def check_schema_attrs(schema, attrs):
+    attrs = attrs if isinstance(attrs, (tuple, list)) else (attrs,)
+    ty = schema.get('type')
+    for attr in (a for a in attrs if schema.get(a) in (None, '')):
+        raise SchemaError(
+            "The '%s' schema type requires a '%s' attribute" % (ty, attr)
         )
-        if namespaced_name:
-            schema['items'] = namespaced_name
-        return
-    if schema_type == 'map':
-        namespaced_name = extract_named_schemas_into_repo(
-            schema['values'],
-            repo,
-            transformer,
-            namespace,
+
+
+def check_sub_attrs(obj, type_name, parent_type, attrs):
+    attrs = attrs if isinstance(attrs, (tuple, list)) else (attrs,)
+    for attr in (a for a in attrs if obj.get(a) in (None, '')):
+        raise SchemaError(
+            "Each '%s' in a '%s' schema type requires a '%s' attribute"
+            % (type_name, parent_type, attr)
         )
-        if namespaced_name:
-            schema['values'] = namespaced_name
-        return
-    # Normal record.
-    for field in schema.get('fields', []):
-        namespaced_name = extract_named_schemas_into_repo(
-            field['type'],
-            repo,
-            transformer,
-            namespace,
-        )
-        if namespaced_name:
-            field['type'] = namespaced_name

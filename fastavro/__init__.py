@@ -73,7 +73,6 @@ def _acquaint_schema(schema):
 
 acquaint_schema = _schema.acquaint_schema = _acquaint_schema
 
-
 # Reader API
 reader = iter_avro = _reader.Reader
 schemaless_reader = _reader.schemaless_reader
@@ -86,6 +85,7 @@ dump = _writer.write_data
 
 # Exceptions
 UnknownType = _schema.UnknownType
+SchemaError = _schema.SchemaError
 SchemaResolutionError = _reader.SchemaResolutionError
 
 # Some useful constants
