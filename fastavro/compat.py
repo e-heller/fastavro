@@ -58,3 +58,7 @@ if PY2:
     iteritems = py2_iteritems
 else:
     iteritems = py3_iteritems
+
+
+def byte2int(b):
+    return ord(b[0]) if PY2 else b[0]

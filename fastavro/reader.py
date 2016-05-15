@@ -13,6 +13,7 @@
 
 from __future__ import absolute_import
 
+import sys
 from struct import unpack, error as StructError
 from zlib import decompress
 
@@ -27,22 +28,26 @@ except ImportError:
     snappy = None
 
 try:
-    from fastavro._compat import BytesIO, xrange, iteritems
+    from fastavro._compat import BytesIO, xrange, iteritems, byte2int
     from fastavro._schema import (
-        extract_named_schemas_into_repo, HEADER_SCHEMA, SYNC_SIZE,
+        extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
         PRIMITIVE_TYPES, AVRO_TYPES,
     )
 except ImportError:
-    from fastavro.compat import BytesIO, xrange, iteritems
+    from fastavro.compat import BytesIO, xrange, iteritems, byte2int
     from fastavro.schema import (
-        extract_named_schemas_into_repo, HEADER_SCHEMA, SYNC_SIZE,
+        extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
         PRIMITIVE_TYPES, AVRO_TYPES,
     )
 
+
+# ---- Exceptions ------------------------------------------------------------#
 
 class SchemaResolutionError(Exception):
     pass
 
+
+# ---- Schema Resolution / Matching ------------------------------------------#
 
 def match_types(writer_type, reader_type):
     if isinstance(writer_type, list) or isinstance(reader_type, list):
@@ -95,6 +100,8 @@ def match_schemas(w_schema, r_schema):
         raise SchemaResolutionError(error_msg)
 
 
+# ---- Reading Avro primitives -----------------------------------------------#
+
 def read_null(fo, writer_schema=None, reader_schema=None):
     """null is written as zero bytes."""
     return None
@@ -131,6 +138,10 @@ def read_long(fo, writer_schema=None, reader_schema=None):
     return (n >> 1) ^ -(n & 1)
 
 
+# Alias `read_int` to `read_long`
+read_int = read_long
+
+
 def read_float(fo, writer_schema=None, reader_schema=None):
     """A float is written as 4 bytes.
 
@@ -162,6 +173,8 @@ def read_utf8(fo, writer_schema=None, reader_schema=None):
     return read_bytes(fo).decode('utf-8')
 
 
+# ---- Reading Avro complex types --------------------------------------------#
+
 def read_fixed(fo, writer_schema, reader_schema=None):
     """Fixed instances are encoded using the number of bytes declared in the
     schema."""
@@ -172,7 +185,7 @@ def read_enum(fo, writer_schema, reader_schema=None):
     """An enum is encoded by a int, representing the zero-based position of the
     symbol in the schema.
     """
-    index = read_long(fo)
+    index = read_int(fo)
     symbol = writer_schema['symbols'][index]
     if reader_schema and symbol not in reader_schema['symbols']:
         symlist = reader_schema['symbols']
@@ -325,27 +338,29 @@ def read_record(fo, writer_schema, reader_schema=None):
     return record
 
 
+# ---- Reader function lookup ------------------------------------------------#
+
 READERS = {
+    # Primitive types
     'null': read_null,
     'boolean': read_boolean,
-    'string': read_utf8,
-    'int': read_long,
+    'int': read_int,
     'long': read_long,
     'float': read_float,
     'double': read_double,
     'bytes': read_bytes,
+    'string': read_utf8,
+
+    # Complex types
     'fixed': read_fixed,
     'enum': read_enum,
     'array': read_array,
     'map': read_map,
     'union': read_union,
-    'error_union': read_union,
     'record': read_record,
     'error': read_record,
+    'error_union': read_union,
 }
-
-
-SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
 
 
 def read_data(fo, writer_schema, reader_schema=None):
@@ -366,58 +381,76 @@ def read_data(fo, writer_schema, reader_schema=None):
         raise EOFError('Cannot read %s from %s' % (record_type, fo))
 
 
+# ---- Block Decoders --------------------------------------------------------#
+
+def null_read_block(fo, buffer):
+    """Read a block of data with no codec ('null' codec)."""
+    block_len = read_long(fo)
+    data = fo.read(block_len)
+    buffer.truncate(0)
+    buffer.seek(0)
+    buffer.write(data)
+    buffer.seek(0)
+
+
+def deflate_read_block(fo, buffer):
+    """Read a block of data with the 'deflate' codec."""
+    block_len = read_long(fo)
+    data = fo.read(block_len)
+    # -15 is the log of the window size; negative indicates "raw"
+    # (no zlib headers) decompression.  See zlib.h.
+    decompressed = decompress(data, -15)
+    buffer.truncate(0)
+    buffer.seek(0)
+    buffer.write(decompressed)
+    buffer.seek(0)
+
+
+def snappy_read_block(fo, buffer):
+    """Read a block of data with the 'snappy' codec."""
+    block_len = read_long(fo)
+    data = fo.read(block_len)
+    # Trim off last 4 bytes which hold the CRC32
+    decompressed = snappy.decompress(data[:-4])
+    buffer.truncate(0)
+    buffer.seek(0)
+    buffer.write(decompressed)
+    buffer.seek(0)
+
+
 def skip_sync(fo, sync_marker):
-    """Skip an expected sync marker, complaining if it doesn't match"""
+    """Skip an expected sync marker. Raise a ValueError if it doesn't match."""
     if fo.read(SYNC_SIZE) != sync_marker:
         raise ValueError('Expected sync marker not found')
 
 
-def null_read_block(fo):
-    """Read block in 'null' codec."""
-    read_long(fo, None)
-    return fo
+# ---- Schema Handling -------------------------------------------------------#
+
+SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
 
 
-def deflate_read_block(fo):
-    """Read block in 'deflate' codec."""
-    data = read_bytes(fo, None)
-    # -15 is the log of the window size; negative indicates "raw" (no
-    # zlib headers) decompression.  See zlib.h.
-    return BytesIO(decompress(data, -15))
+def get_schema_defs():
+    """Return the registered schema definitions."""
+    return SCHEMA_DEFS
 
 
-def snappy_read_block(fo):
-    length = read_long(fo, None)
-    data = fo.read(length - 4)
-    fo.read(4)  # CRC
-    return BytesIO(snappy.decompress(data))
-
-
-BLOCK_READERS = {
-    'null': null_read_block,
-    'deflate': deflate_read_block
-}
-
-if snappy:
-    BLOCK_READERS['snappy'] = snappy_read_block
-
-
-def acquaint_schema(schema,
-                    repo=None,
-                    reader_schema_defs=None):
-    """Extract schema in repo (default READERS)"""
+def acquaint_schema(schema, repo=None, reader_schema_defs=None):
+    """Extract `schema` into `repo` (default READERS)"""
     repo = READERS if repo is None else repo
-    reader_schema_defs = \
+    reader_schema_defs = (
         SCHEMA_DEFS if reader_schema_defs is None else reader_schema_defs
+    )
     extract_named_schemas_into_repo(
         schema,
         repo,
         lambda schema: lambda fo, _, r_schema: read_data(
-            fo, schema, reader_schema_defs.get(r_schema)),
+            fo, schema, reader_schema_defs.get(r_schema)
+        ),
     )
 
 
 def populate_schema_defs(schema, repo=None):
+    """Add a `schema` definition to `repo` (default SCHEMA_DEFS)"""
     repo = SCHEMA_DEFS if repo is None else repo
     extract_named_schemas_into_repo(
         schema,
@@ -426,36 +459,82 @@ def populate_schema_defs(schema, repo=None):
     )
 
 
+# ---- Public API - Reading Avro Files ---------------------------------------#
+
 class Reader(object):
-    """Creates a reader as an iterator over the records in the Avro file"""
+    """Creates an Avro reader as an iterator over the records in an Avro file.
+    """
 
     def __init__(self, fo, reader_schema=None):
-        """Creates a reader as an iterator over the records in the Avro file
+        """Creates an Avro reader as an iterator over the records in the Avro
+        file `fo`, optionally migrating to the `reader_schema` if provided.
 
         Paramaters
         ----------
-        fo: file like
-            Input stream
+        fo: file-like object
+            Input file or stream
         reader_schema: dict, optional
-            Reader schema
+            Avro "reader's schema"
 
         Example
         -------
-        >>> with open('some-file.avro', 'rb') as fo:
-        >>>     avro = iter_avro(fo)
-        >>>     schema = avro.schema
-        >>>     for record in avro:
+        >>> import fastavro
+        >>>
+        >>> with open('some-file.avro', 'rb') as input:
+        >>>     # Obtain the record iterator:
+        >>>     reader = fastavro.Reader(input)
+        >>>
+        >>>     # Obtain the writer's schema if required:
+        >>>     schema = reader.schema
+        >>>
+        >>>     # Iterate over the records:
+        >>>     for record in reader:
         >>>         process_record(record)
         """
         self.fo = fo
+        self.reader_schema = reader_schema
+
+        self._read_header()
+
+        # Verify `codec`
+        if self.codec == 'snappy' and not snappy:
+            raise ValueError(
+                "Cannot read 'snappy' codec: 'snappy' module is not available"
+            )
+        elif self.codec not in ('null', 'deflate'):
+            raise ValueError('Unknown codec: %r' % self.codec)
+
+        # Register the schema
+        acquaint_schema(self.writer_schema)
+        if reader_schema:
+            populate_schema_defs(reader_schema)
+
+        self._iterator = self._record_iterator()
+
+    def __iter__(self):
+        return self._iterator
+
+    def next(self):
+        return next(self._iterator)
+
+    def _read_header(self):
+        """Read the Avro Header information"""
         try:
-            self._header = read_data(fo, HEADER_SCHEMA)
+            self._header = read_data(self.fo, HEADER_SCHEMA)
         except StopIteration:
             raise ValueError('Failed to read Avro header')
 
-        self.sync_marker = self._header['sync']
+        # Read `magic`
+        self._magic = self._header['magic']
+        if self._magic != MAGIC:
+            version = byte2int(self._magic[-1])
+            sys.stderr.write(
+                'Warning: unsupported Avro version: %d\n' % version
+            )
 
-        # Values in the `meta` dict are `bytes`, so decoding must be external.
+        self._sync_marker = self._header['sync']
+
+        # Read Metadata - `meta` values are bytes, decode them to unicode
         self.metadata = dict(
             (k, v.decode('utf-8')) for k, v in iteritems(self._header['meta'])
         )
@@ -463,53 +542,52 @@ class Reader(object):
         self.schema = self.writer_schema = (
             json.loads(self.metadata['avro.schema'])
         )
-        self.codec = self.metadata.get('avro.codec', 'null')
-        self.reader_schema = reader_schema
-
-        self.read_block = BLOCK_READERS.get(self.codec)
-        if not self.read_block:
-            raise ValueError('Unrecognized codec: %r' % self.codec)
-
-        acquaint_schema(self.writer_schema, READERS)
-        if reader_schema:
-            populate_schema_defs(reader_schema, SCHEMA_DEFS)
-
-        self.records = self._record_iterator()
-
-    def __iter__(self):
-        return self.records
-
-    def next(self):
-        return next(self.records)
+        self.codec = self.metadata.get('avro.codec', u'null')
 
     def _record_iterator(self):
-        """Returns an iterator over the records in the Avro file"""
+        """Iterator function over the records in the Avro file"""
+
+        # Alias these values so the code won't need to keep performing
+        # attribute lookups on `self` (small optimization)
+        fo = self.fo
+        sync_marker = self._sync_marker
         writer_schema = self.writer_schema
         reader_schema = self.reader_schema
 
+        # Get the block decoder
+        if self.codec == 'deflate':
+            read_block = deflate_read_block
+        elif self.codec == 'snappy':
+            read_block = snappy_read_block
+        else:
+            read_block = null_read_block
+
+        block_buf = BytesIO()
+
         while True:
-            block_count = read_long(self.fo, None)
-            block = self.read_block(self.fo)
+            block_count = read_long(fo)
+            read_block(fo, block_buf)
 
             for i in xrange(block_count):
-                yield read_data(block, writer_schema, reader_schema)
+                yield read_data(block_buf, writer_schema, reader_schema)
 
-            skip_sync(self.fo, self.sync_marker)
+            skip_sync(fo, sync_marker)
 
+        block_buf.close()
 
 # For backwards compatability
 iter_avro = Reader
 
 
 def schemaless_reader(fo, schema):
-    """Reads a single record writen using the schemaless_writer
+    """Reads a single record writen with `fastavro.schemaless_writer`
 
     Paramaters
     ----------
-    fo: file like
-        Input stream
+    fo: file-like object
+        Input file or stream
     schema: dict
-        Reader schema
+        Avro "reader's schema"
     """
-    acquaint_schema(schema, READERS)
+    acquaint_schema(schema)
     return read_data(fo, schema)
