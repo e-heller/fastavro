@@ -56,55 +56,95 @@ class ReadError(ValueError):
 
 # ---- Schema Resolution / Matching ------------------------------------------#
 
-def match_types(writer_type, reader_type):
-    if isinstance(writer_type, list) or isinstance(reader_type, list):
-        return True
-    if writer_type == reader_type:
-        return True
-    # promotion cases
-    elif writer_type == 'int' and reader_type in ('long', 'float', 'double'):
-        return True
-    elif writer_type == 'long' and reader_type in ('float', 'double'):
-        return True
-    elif writer_type == 'float' and reader_type == 'double':
-        return True
-    return False
-
-
 def match_schemas(w_schema, r_schema):
-    error_msg = 'Schema mismatch: %s is not %s' % (w_schema, r_schema)
-    if isinstance(w_schema, list):
-        # If the writer is a union, checks will happen in read_union after the
-        # correct schema is known
-        return True
-    elif isinstance(r_schema, list):
-        # If the reader is a union, ensure one of the new schemas is the same
-        # as the writer
-        for schema in r_schema:
-            if match_types(w_schema, schema):
-                return True
-        else:
-            raise SchemaResolutionError(error_msg)
-    else:
-        # Check for dicts as primitive types are just strings
-        if isinstance(w_schema, dict):
-            w_type = w_schema['type']
-        else:
-            w_type = w_schema
-        if isinstance(r_schema, dict):
-            r_type = r_schema['type']
-        else:
-            r_type = r_schema
+    """Match the writer's schema `w_schema` with the reader's schema `r_schema`
 
-        if w_type == r_type == 'map':
-            if match_types(w_schema['values'], r_schema['values']):
-                return True
-        elif w_type == r_type == 'array':
-            if match_types(w_schema['items'], r_schema['items']):
-                return True
-        elif match_types(w_type, r_type):
+    Return True if `w_schema` is a *match* for `r_schema`, else False
+
+    From: https://avro.apache.org/docs/current/spec.html#Schema+Resolution
+
+    It is an error if the two schemas do not *match*.
+    To *match*, one of the following must hold:
+      * Both schemas are arrays whose item types match
+      * Both schemas are maps whose value types match
+      * Both schemas are enums whose names match
+      * Both schemas are fixed whose sizes and names match
+      * Both schemas are records with the same name
+
+      * Either schema is a union
+        + If both are unions:
+          - The first schema in the reader's union that matches the selected
+            writer's union schema is recursively resolved against it.
+        + If reader's is a union, but writer's is not:
+          - The first schema in the reader's union that matches the writer's
+            schema is recursively resolved against it.
+        + If writer's is a union, but reader's is not
+          - If the reader's schema matches the selected writer's schema, it is
+            recursively resolved against it.
+
+      * Both schemas have the same primitive type
+        OR the writer's schema may be *promoted* to the reader's as follows:
+        + int is promotable to long, float, or double
+        + long is promotable to float or double
+        + float is promotable to double
+        + string is promotable to bytes
+        + bytes is promotable to string
+    """
+    if isinstance(w_schema, dict) and isinstance(r_schema, dict):
+        # Array, Map, Enum, Fixed, Record, Error
+        w_type = w_schema['type']
+        r_type = r_schema['type']
+        if w_type != r_type:
+            return False
+        if w_type == 'array':
+            # 'Both schemas are arrays whose item types match'
+            return match_schemas(w_schema['items'], r_schema['items'])
+        elif w_type == 'map':
+            # 'Both schemas are maps whose value types match'
+            return match_schemas(w_schema['values'], r_schema['values'])
+        elif w_type in ('enum', 'record', 'error'):
+            # 'Both schemas are enums whose names match'
+            # 'Both schemas are records with the same name'
+            # Note: Futher checks must be applied after data is read in
+            # `read_enum()` and `read_record()`
+            return w_schema['name'] == r_schema['name']
+        elif w_type == 'fixed':
+            # 'Both schemas are fixed whose sizes and names match'
+            return (
+                w_schema['name'] == r_schema['name'] and
+                w_schema['size'] == r_schema['size']
+            )
+        elif w_type == r_type:
+            # Unknown type - just return True
             return True
-        raise SchemaResolutionError(error_msg)
+
+    elif isinstance(w_schema, list) or isinstance(r_schema, list):
+        # 'Either schema is a union'
+        if isinstance(w_schema, list):
+            # If the writer is a union, the check is applied in `read_union()`
+            # when the correct schema is known.
+            return True
+        else:
+            # If the reader is a union, ensure at least one of the schemas in
+            # the reader's union matches the writer's schema.
+            return any(match_schemas(w_schema, s) for s in r_schema)
+
+    elif w_schema == r_schema:
+        return True
+
+    # Promotion cases:
+    elif w_schema == 'int' and r_schema in ('long', 'float', 'double'):
+        return True
+    elif w_schema == 'long' and r_schema in ('float', 'double'):
+        return True
+    elif w_schema == 'float' and r_schema == 'double':
+        return True
+    elif w_schema == 'string' and r_schema == 'bytes':
+        return True
+    elif w_schema == 'bytes' and r_schema == 'string':
+        return True
+
+    return False
 
 
 # ---- Reading Avro primitives -----------------------------------------------#
@@ -180,7 +220,11 @@ def read_bytes(fo, writer_schema=None, reader_schema=None):
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
     size = read_long(fo)
-    return fo.read(size)
+    if reader_schema == 'string':
+        # Schema Resolution: promote to unicode string
+        return fo.read(size).decode('utf-8')
+    else:
+        return fo.read(size)
 
 
 def read_string(fo, writer_schema=None, reader_schema=None):
@@ -192,7 +236,11 @@ def read_string(fo, writer_schema=None, reader_schema=None):
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
     size = read_long(fo)
-    return fo.read(size).decode('utf-8')
+    if reader_schema == 'bytes':
+        # Schema Resolution: promote to byte string
+        return fo.read(size)
+    else:
+        return fo.read(size).decode('utf-8')
 
 
 # ---- Reading Avro complex types --------------------------------------------#
@@ -301,7 +349,7 @@ def read_union(fo, writer_schema, reader_schema=None):
         r_schemas = (reader_schema if isinstance(reader_schema, list)
                      else (reader_schema,))
         for r_schema in r_schemas:
-            if match_types(w_schema, r_schema):
+            if match_schemas(w_schema, r_schema):
                 return read_data(fo, w_schema, r_schema)
         raise SchemaResolutionError(
             'Schema mismatch: %s cannot resolve to %s'
@@ -412,7 +460,12 @@ def read_data(fo, writer_schema, reader_schema=None):
         record_type = writer_schema
 
     if reader_schema and record_type in AVRO_TYPES:
-        match_schemas(writer_schema, reader_schema)
+        if not match_schemas(writer_schema, reader_schema):
+            raise SchemaResolutionError(
+                'Schema mismatch: %s does not match %s'
+                % (writer_schema, reader_schema)
+            )
+
     try:
         return READERS[record_type](fo, writer_schema, reader_schema)
     except (SchemaResolutionError, ReadError):
