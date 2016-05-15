@@ -24,14 +24,26 @@ PY2 = sys.version_info[0] == 2
 PY3 = sys.version_info[0] == 3
 
 
-if PY3:
+if PY2:
+    # Python 2 type aliases
+    _unicode_type = unicode
+    _bytes_type = str
+    _string_types = (basestring,)
+    _int_types = (int, long)
+    _number_types = (int, long, float)
+
+    from cStringIO import StringIO as BytesIO  # noqa
+    xrange = xrange
+
+    def py2_iteritems(obj):
+        return obj.iteritems()
+else:
     # Python 3 type aliases
     _unicode_type = str
     _bytes_type = bytes
     _string_types = (bytes, str)
     _int_types = (int,)
     _number_types = (int, float)
-    _unicode = str
 
     from io import BytesIO  # noqa
     xrange = range
@@ -39,25 +51,10 @@ if PY3:
     def py3_iteritems(obj):
         return iter(obj.items())
 
-else:
-    # Python 2 type aliases
-    _unicode_type = unicode
-    _bytes_type = str
-    _string_types = (basestring,)
-    _int_types = (int, long)
-    _number_types = (int, long, float)
-    _unicode = unicode
-
-    from cStringIO import StringIO as BytesIO  # noqa
-    xrange = xrange
-
-    def py2_iteritems(obj):
-        return obj.iteritems()
-
 
 # Export an alias for each of the version-specific functions
 # We do it this way because Cython does not like redefined functions.
-if PY3:
-    iteritems = py3_iteritems
-else:
+if PY2:
     iteritems = py2_iteritems
+else:
+    iteritems = py3_iteritems
