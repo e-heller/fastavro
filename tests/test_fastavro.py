@@ -20,7 +20,7 @@ except ImportError:
 import fastavro
 
 from tests.utils import (
-    random_byte_str, random_unicode_str,
+    random_byte_str, random_unicode_str, _unicode_type, _bytes_type,
 )
 
 
@@ -655,6 +655,54 @@ def test_schema_migration_union_int_to_float_promotion():
     new_reader = fastavro.reader(new_file, new_schema)
     new_records = list(new_reader)
     assert new_records == records
+
+
+def test_schema_migration_union_bytes_to_string_promotion():
+    schema = {
+        'name': 'migration_test',
+        'type': 'record',
+        'fields': [{'name': 'test', 'type': ['int', 'bytes', 'string']}],
+    }
+
+    new_schema = {
+        'name': 'migration_test',
+        'type': 'record',
+        'fields': [{'name': 'test', 'type': ['int', 'string']}],
+    }
+
+    new_file = BytesIO()
+    byte_str = b'byte_str'
+    records = [{'test': byte_str}]
+    fastavro.writer(new_file, schema, records)
+    new_file.seek(0)
+    new_reader = fastavro.reader(new_file, new_schema)
+    new_records = list(new_reader)
+    assert isinstance(new_records[0]['test'], _unicode_type)
+    assert new_records[0]['test'] == byte_str.decode('utf-8')
+
+
+def test_schema_migration_union_string_to_bytes_promotion():
+    schema = {
+        'name': 'migration_test',
+        'type': 'record',
+        'fields': [{'name': 'test', 'type': ['int', 'bytes', 'string']}],
+    }
+
+    new_schema = {
+        'name': 'migration_test',
+        'type': 'record',
+        'fields': [{'name': 'test', 'type': ['int', 'bytes']}],
+    }
+
+    new_file = BytesIO()
+    unicode_str = u'unicode_str'
+    records = [{'test': unicode_str}]
+    fastavro.writer(new_file, schema, records)
+    new_file.seek(0)
+    new_reader = fastavro.reader(new_file, new_schema)
+    new_records = list(new_reader)
+    assert isinstance(new_records[0]['test'], _bytes_type)
+    assert new_records[0]['test'] == unicode_str.encode('utf-8')
 
 
 def test_schema_migration_maps_with_union_promotion():
