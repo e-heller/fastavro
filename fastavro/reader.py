@@ -110,16 +110,18 @@ def match_schemas(w_schema, r_schema):
 # ---- Reading Avro primitives -----------------------------------------------#
 
 def read_null(fo, writer_schema=None, reader_schema=None):
-    """null is written as zero bytes."""
+    """A `null` value is not written at all."""
     return None
 
 
 def read_boolean(fo, writer_schema=None, reader_schema=None):
-    """A boolean is written as a single byte whose value is either 0 (false) or
-    1 (true).
-    """
-    # technically 0x01 == true and 0x00 == false, but many languages will cast
-    # anything other than 0 to True and only 0 to False
+    """A `boolean` value is written as a single byte: b'0x00' for False,
+    b'0x01' for True.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
+    # Although technically 0x01 == True and 0x00 == False, many languages will
+    # cast anything other than 0 to True and only 0 to False
     c = fo.read(1)
     if not c:
         raise EOFError("Failed to read 'boolean' value")
@@ -127,8 +129,15 @@ def read_boolean(fo, writer_schema=None, reader_schema=None):
 
 
 def read_long(fo, writer_schema=None, reader_schema=None):
-    """int and long values are written using variable-length, zig-zag
-    coding."""
+    """`int` and `long` values are written as 32-bit and 64-bit integers,
+    respectively, using a variable-length zig-zag encoding. This is the same
+    encoding used in Google protobufs.
+
+    A good explanation of this encoding can be found at:
+        https://developers.google.com/protocol-buffers/docs/encoding#signed-integers
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     c = fo.read(1)
     if not c:
         raise EOFError("Failed to read 'long' value")
@@ -147,33 +156,41 @@ read_int = read_long
 
 
 def read_float(fo, writer_schema=None, reader_schema=None):
-    """A float is written as 4 bytes.
+    """A `float` value is written as a single precision 32-bit IEEE 754
+    floating-point value in little-endian format.
 
-    The float is converted into a 32-bit integer using a method equivalent to
-    Java's floatToIntBits and then encoded in little-endian format.
-    """
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     return unpack('<f', fo.read(4))[0]
 
 
 def read_double(fo, writer_schema=None, reader_schema=None):
-    """A double is written as 8 bytes.
+    """A `double` value is written as a double precision 64-bit IEEE 754
+    floating-point value in little-endian format.
 
-    The double is converted into a 64-bit integer using a method equivalent to
-    Java's doubleToLongBits and then encoded in little-endian format.
-    """
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     return unpack('<d', fo.read(8))[0]
 
 
 def read_bytes(fo, writer_schema=None, reader_schema=None):
-    """Bytes are encoded as a long followed by that many bytes of data."""
+    """A `bytes` value is written as a `long` (length of the byte string),
+    immediately followed by the raw byte data.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     size = read_long(fo)
     return fo.read(size)
 
 
 def read_string(fo, writer_schema=None, reader_schema=None):
-    """A string is encoded as a long followed by that many bytes of UTF-8
-    encoded character data.
-    """
+    """A `string` value is written as a `long` (length of the UTF-8 encoded
+    string), immediately followed by the UTF-8 encoded byte data.
+
+    Note: Avro `string` values *must* be encoded to UTF-8 byte strings.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     size = read_long(fo)
     return fo.read(size).decode('utf-8')
 
@@ -181,18 +198,25 @@ def read_string(fo, writer_schema=None, reader_schema=None):
 # ---- Reading Avro complex types --------------------------------------------#
 
 def read_fixed(fo, writer_schema, reader_schema=None):
-    """Fixed instances are encoded using the number of bytes declared in the
-    schema."""
+    """A `fixed` value is written as raw bytes. The length of the byte data
+    is declared in the schema.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Fixed
+    """
     return fo.read(writer_schema['size'])
 
 
 def read_enum(fo, writer_schema, reader_schema=None):
-    """An enum is encoded by a int, representing the zero-based position of the
-    symbol in the schema.
+    """An `enum` value is written as an `int` representing the zero-based
+    position of the symbol in the schema.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Enums
     """
     index = read_int(fo)
     symbol = writer_schema['symbols'][index]
     if reader_schema and symbol not in reader_schema['symbols']:
+        # Schema Resolution: 'If the writer's symbol is not present in the
+        # reader's enum, then an error is signalled.'
         symlist = reader_schema['symbols']
         msg = '%s not found in reader symbol list %s' % (symbol, symlist)
         raise SchemaResolutionError(msg)
@@ -200,15 +224,17 @@ def read_enum(fo, writer_schema, reader_schema=None):
 
 
 def read_array(fo, writer_schema, reader_schema=None):
-    """Arrays are encoded as a series of blocks.
+    """An `array` value is written as a series of blocks.
 
-    Each block consists of a long count value, followed by that many array
-    items.  A block with count zero indicates the end of the array.  Each item
+    Each block consists of a `long` `count` value, followed by that many array
+    items. A block with `count` zero indicates the end of the array. Each item
     is encoded per the array's item schema.
 
-    If a block's count is negative, then the count is followed immediately by a
-    long block size, indicating the number of bytes in the block.  The actual
-    count in this case is the absolute value of the count written.
+    If a block's `count` is negative, then the `count` is followed immediately
+    by a `long` block size, indicating the number of bytes in the block. The
+    actual `count` in this case is the absolute value of the `count` written.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Arrays
     """
     w_item_schema = writer_schema['items']
     r_item_schema = reader_schema['items'] if reader_schema else None
@@ -228,15 +254,20 @@ def read_array(fo, writer_schema, reader_schema=None):
 
 
 def read_map(fo, writer_schema, reader_schema=None):
-    """Maps are encoded as a series of blocks.
+    """A `map` value is written as a series of blocks.
 
-    Each block consists of a long count value, followed by that many key/value
-    pairs.  A block with count zero indicates the end of the map.  Each item is
-    encoded per the map's value schema.
+    Each block consists of a `long` `count` value, followed by that many
+    key / value pairs. A block with `count` zero indicates the end of the map.
 
-    If a block's count is negative, then the count is followed immediately by a
-    long block size, indicating the number of bytes in the block.  The actual
-    count in this case is the absolute value of the count written.
+    If a block's `count` is negative, then the `count` is followed immediately
+    by a `long` block size, indicating the number of bytes in the block. The
+    actual `count` in this case is the absolute value of the `count` written.
+
+    For reading the key / value pairs:
+        A map `key` is assumed to be string
+        A map `value` is read per the map's 'value' schema
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Maps
     """
     w_value_schema = writer_schema['values']
     r_value_schema = reader_schema['values'] if reader_schema else None
@@ -257,10 +288,11 @@ def read_map(fo, writer_schema, reader_schema=None):
 
 
 def read_union(fo, writer_schema, reader_schema=None):
-    """A union is encoded by first writing a long value indicating the
-    zero-based position within the union of the schema of its value.
+    """A `union` value is written as a `long` indicating the zero-based
+    position of the `value` in the union's schema, immediately followed by
+    the `value`, written per the indicated schema within the union.
 
-    The value is then encoded per the indicated schema within the union.
+    Reference: https://avro.apache.org/docs/current/spec.html#Unions
     """
     index = read_long(fo)
     w_schema = writer_schema[index]
@@ -280,23 +312,27 @@ def read_union(fo, writer_schema, reader_schema=None):
 
 
 def read_record(fo, writer_schema, reader_schema=None):
-    """A record is encoded by encoding the values of its fields in the order
-    that they are declared. In other words, a record is encoded as just the
-    concatenation of the encodings of its fields.  Field values are encoded per
-    their schema.
+    """A `record` value is written by encoding the values of its fields in the
+    order in which they are declared. In other words, a `record` is written
+    as just the concatenation of the encodings of its fields. Field values
+    are encoded per their schema.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#schema_record
 
     Schema Resolution:
-     * the ordering of fields may be different: fields are matched by name.
-     * schemas for fields with the same name in both records are resolved
-         recursively.
-     * if the writer's record contains a field with a name not present in the
-         reader's record, the writer's value for that field is ignored.
-     * if the reader's record schema has a field that contains a default value,
-         and writer's schema does not have a field with the same name, then the
-         reader should use the default value from its field.
-     * if the reader's record schema has a field with no default value, and
-         writer's schema does not have a field with the same name, then the
-         field's value is unset.
+      * The ordering of fields may be different: fields are matched by name.
+      * Schemas for fields with the same name in both records are resolved
+        recursively.
+      * If the writer's record contains a field with a name not present in the
+        reader's record, the writer's value for that field is ignored.
+      * If the reader's record schema has a field that contains a default
+        value, and writer's schema does not have a field with the same name,
+        then the reader should use the default value from its field.
+      * If the reader's record schema has a field with no default value, and
+        writer's schema does not have a field with the same name, an error is
+        signalled.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Schema+Resolution
     """
     record = {}
     if reader_schema is None:
@@ -356,8 +392,18 @@ READERS = {
 
 
 def read_data(fo, writer_schema, reader_schema=None):
-    """Read data from file object according to schema."""
+    """Read data from the input stream `fo`, according to the Schema
+    `writer_schema`, optionally migrating to the `reader_schema` if provided.
 
+    Paramaters
+    ----------
+    fo: file-like object
+        Input file or stream
+    writer_schema: dict
+        Avro "writer's schema"
+    reader_schema: dict, optional
+        Avro "reader's schema"
+    """
     if isinstance(writer_schema, dict):
         record_type = writer_schema['type']
     elif isinstance(writer_schema, list):
