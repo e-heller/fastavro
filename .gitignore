@@ -1,15 +1,66 @@
-syntax: glob
+# Many rules taken from this very useful reference:
+# https://github.com/github/gitignore/blob/master/Python.gitignore
 
+# Local files
 README.html
-build
-dist
+/tests/out/*
+/notes/
+/benchmarks/output/*
+/benchmarks/input/*
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# C files / extensions
+*.so
+*.o
+*.s
+*.c
+
+# Sphinx documentation
 docs/_build/
-fastavro.egg-info
-fastavro/*.so
-fastavro/_*.c
+
+# Unit test / coverage reports
+htmlcov/
+.tox/
+.coverage
+.coverage.*
+.cache
 profile.out
-tests/benchmark.avro
-venv
-.tox
-.idea
-*.pyc
+nosetests.xml
+coverage.xml
+*,cover
+
+# pyenv / dotenv / virtualenv
+.python-version
+.env
+venv/
+ENV/
+
+# Distribution / packaging
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# PyCharm files
+.idea/
+
+# Eclipse files
+.project
+.pydevproject
+.settings/
