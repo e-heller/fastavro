@@ -166,11 +166,12 @@ def read_bytes(fo, writer_schema=None, reader_schema=None):
     return fo.read(size)
 
 
-def read_utf8(fo, writer_schema=None, reader_schema=None):
+def read_string(fo, writer_schema=None, reader_schema=None):
     """A string is encoded as a long followed by that many bytes of UTF-8
     encoded character data.
     """
-    return read_bytes(fo).decode('utf-8')
+    size = read_long(fo)
+    return fo.read(size).decode('utf-8')
 
 
 # ---- Reading Avro complex types --------------------------------------------#
@@ -256,7 +257,7 @@ def read_map(fo, writer_schema, reader_schema=None):
             read_long(fo)
 
         for i in xrange(block_count):
-            key = read_utf8(fo)
+            key = read_string(fo)
             read_items[key] = item_reader(fo, writer_schema, reader_schema)
         block_count = read_long(fo)
 
@@ -349,7 +350,7 @@ READERS = {
     'float': read_float,
     'double': read_double,
     'bytes': read_bytes,
-    'string': read_utf8,
+    'string': read_string,
 
     # Complex types
     'fixed': read_fixed,
