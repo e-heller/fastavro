@@ -342,7 +342,6 @@ READERS = {
     'error_union': read_union,
     'record': read_record,
     'error': read_record,
-    'request': read_record,
 }
 
 

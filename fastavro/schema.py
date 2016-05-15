@@ -75,7 +75,6 @@ COMPLEX_TYPES = NAMED_TYPES | set([
     'array',
     'error_union',
     'map',
-    'request',
     'union',
 ])
 

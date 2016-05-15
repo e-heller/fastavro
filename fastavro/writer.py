@@ -224,7 +224,7 @@ def validate(datum, schema):
             all(validate(v, schema['values']) for v in datum.values())
         )
 
-    if record_type in ('record', 'error', 'request',):
+    if record_type in ('record', 'error'):
         return (
             isinstance(datum, Mapping) and
             all(
