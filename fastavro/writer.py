@@ -15,7 +15,7 @@ from __future__ import absolute_import
 
 from binascii import crc32
 from collections import Iterable, Mapping
-from os import urandom, SEEK_SET
+from os import urandom
 from struct import pack
 from zlib import compress
 
@@ -49,6 +49,14 @@ except ImportError:
     )
 
 
+INT_MIN_VALUE = -(1 << 31)
+INT_MAX_VALUE = (1 << 31) - 1
+LONG_MIN_VALUE = -(1 << 63)
+LONG_MAX_VALUE = (1 << 63) - 1
+
+
+# ---- Writing Avro primitives -----------------------------------------------#
+
 def write_null(fo, datum, schema=None):
     """null is written as zero bytes"""
     pass
@@ -69,6 +77,8 @@ def write_int(fo, datum, schema=None):
         datum >>= 7
     fo.write(pack('B', datum))
 
+
+# Alias `write_long` to `write_int`
 write_long = write_int
 
 
@@ -101,11 +111,7 @@ def write_utf8(fo, datum, schema=None):
     write_bytes(fo, byte_str)
 
 
-def write_crc32(fo, bytes):
-    """A 4-byte, big-endian CRC32 checksum"""
-    data = crc32(bytes) & 0xFFFFFFFF
-    fo.write(pack('>I', data))
-
+# ---- Writing Avro complex types --------------------------------------------#
 
 def write_fixed(fo, datum, schema=None):
     """Fixed instances are encoded using the number of bytes declared in the
@@ -130,7 +136,6 @@ def write_array(fo, datum, schema):
     If a block's count is negative, then the count is followed immediately by a
     long block size, indicating the number of bytes in the block.  The actual
     count in this case is the absolute value of the count written.  """
-
     if len(datum) > 0:
         write_long(fo, len(datum))
         dtype = schema['items']
@@ -158,11 +163,33 @@ def write_map(fo, datum, schema):
     write_long(fo, 0)
 
 
-INT_MIN_VALUE = -(1 << 31)
-INT_MAX_VALUE = (1 << 31) - 1
-LONG_MIN_VALUE = -(1 << 63)
-LONG_MAX_VALUE = (1 << 63) - 1
+def write_union(fo, datum, schema):
+    """A union is encoded by first writing a long value indicating the
+    zero-based position within the union of the schema of its value. The value
+    is then encoded per the indicated schema within the union."""
+    for index, candidate in enumerate(schema):
+        if validate(datum, candidate):
+            break
+    else:
+        raise ValueError(
+            '%r (type %s) does not match the schema: %s'
+            % (datum, type(datum), schema)
+        )
+    write_long(fo, index)
+    write_data(fo, datum, schema[index])
 
+
+def write_record(fo, datum, schema):
+    """A record is encoded by encoding the values of its fields in the order
+    that they are declared. In other words, a record is encoded as just the
+    concatenation of the encodings of its fields.  Field values are encoded per
+    their schema."""
+    for field in schema['fields']:
+        value = datum.get(field['name'], field.get('default'))
+        write_data(fo, value, field['type'])
+
+
+# ---- Validation of data with Schema ----------------------------------------#
 
 def validate(datum, schema):
     """Determine if a python datum is an instance of a schema."""
@@ -177,54 +204,54 @@ def validate(datum, schema):
     if record_type == 'null':
         return datum is None
 
-    if record_type == 'boolean':
+    elif record_type == 'boolean':
         return isinstance(datum, bool)
 
-    if record_type == 'string':
+    elif record_type == 'string':
         return isinstance(datum, _string_types)
 
-    if record_type == 'bytes':
+    elif record_type == 'bytes':
         return isinstance(datum, _bytes_type)
 
-    if record_type == 'int':
+    elif record_type == 'int':
         return (
             isinstance(datum, _int_types) and
             INT_MIN_VALUE <= datum <= INT_MAX_VALUE
         )
 
-    if record_type == 'long':
+    elif record_type == 'long':
         return (
             isinstance(datum, _int_types) and
             LONG_MIN_VALUE <= datum <= LONG_MAX_VALUE
         )
 
-    if record_type in ['float', 'double']:
+    elif record_type in ('float', 'double',):
         return isinstance(datum, _number_types)
 
-    if record_type == 'fixed':
+    elif record_type == 'fixed':
         return isinstance(datum, bytes) and len(datum) == schema['size']
 
-    if record_type == 'union':
+    elif record_type in ('union', 'error_union',):
         return any(validate(datum, s) for s in schema)
 
     # dict-y types from here on.
-    if record_type == 'enum':
+    elif record_type == 'enum':
         return datum in schema['symbols']
 
-    if record_type == 'array':
+    elif record_type == 'array':
         return (
             isinstance(datum, Iterable) and
             all(validate(d, schema['items']) for d in datum)
         )
 
-    if record_type == 'map':
+    elif record_type == 'map':
         return (
             isinstance(datum, Mapping) and
             all(isinstance(k, _string_types) for k in datum.keys()) and
             all(validate(v, schema['values']) for v in datum.values())
         )
 
-    if record_type in ('record', 'error'):
+    elif record_type in ('record', 'error'):
         return (
             isinstance(datum, Mapping) and
             all(
@@ -232,63 +259,37 @@ def validate(datum, schema):
                 for f in schema['fields']
             )
         )
-
-    if record_type in SCHEMA_DEFS:
-        return validate(datum, SCHEMA_DEFS[record_type])
-
-    raise ValueError('unkown record type - %s' % record_type)
-
-
-def write_union(fo, datum, schema):
-    """A union is encoded by first writing a long value indicating the
-    zero-based position within the union of the schema of its value. The value
-    is then encoded per the indicated schema within the union."""
-
-    pytype = type(datum)
-    for index, candidate in enumerate(schema):
-        if validate(datum, candidate):
-            break
     else:
-        msg = '%r (type %s) do not match %s' % (datum, pytype, schema)
-        raise ValueError(msg)
+        record_type = SCHEMA_DEFS.get(record_type)
+        if record_type:
+            return validate(datum, record_type)
 
-    # write data
-    write_long(fo, index)
-    write_data(fo, datum, schema[index])
+    raise ValueError('Unknown record type: %s' % record_type)
 
 
-def write_record(fo, datum, schema):
-    """A record is encoded by encoding the values of its fields in the order
-    that they are declared. In other words, a record is encoded as just the
-    concatenation of the encodings of its fields.  Field values are encoded per
-    their schema."""
-    for field in schema['fields']:
-        write_data(fo,
-                   datum.get(field['name'], field.get('default')),
-                   field['type'])
-
+# ---- Writer function lookup ------------------------------------------------#
 
 WRITERS = {
+    # Primitive types
     'null': write_null,
     'boolean': write_boolean,
-    'string': write_utf8,
-    'int': write_long,
+    'int': write_int,
     'long': write_long,
     'float': write_float,
     'double': write_double,
     'bytes': write_bytes,
+    'string': write_utf8,
+
+    # Complex types
     'fixed': write_fixed,
     'enum': write_enum,
     'array': write_array,
     'map': write_map,
     'union': write_union,
-    'error_union': write_union,
     'record': write_record,
     'error': write_record,
+    'error_union': write_union,
 }
-
-
-SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
 
 
 def write_data(fo, datum, schema):
@@ -309,54 +310,39 @@ def write_data(fo, datum, schema):
         record_type = 'union'
     else:
         record_type = schema
-
     return WRITERS[record_type](fo, datum, schema)
 
 
-def write_header(fo, metadata, sync_marker):
-    header = {
-        'magic': MAGIC,
-        'meta': dict(
-            (k, v.encode('utf-8') if isinstance(v, _unicode_type) else v)
-            for k, v in iteritems(metadata)
-        ),
-        'sync': sync_marker
-    }
-    write_data(fo, header, HEADER_SCHEMA)
-
+# ---- Block Encoders --------------------------------------------------------#
 
 def null_write_block(fo, block_bytes):
-    """Write block in "null" codec."""
+    """Write a block of bytes with no codec ('null' codec)."""
     write_long(fo, len(block_bytes))
     fo.write(block_bytes)
 
 
 def deflate_write_block(fo, block_bytes):
-    """Write block in "deflate" codec."""
-    # The first two characters and last character are zlib
-    # wrappers around deflate data.
+    """Write a block of bytes with the 'deflate' codec."""
+    # The first two and last characters are zlib wrappers around deflate data
     data = compress(block_bytes)[2:-1]
-
     write_long(fo, len(data))
     fo.write(data)
 
 
 def snappy_write_block(fo, block_bytes):
-    """Write block in "snappy" codec."""
+    """Write a block of bytes wih the 'snappy' codec."""
     data = snappy.compress(block_bytes)
-
-    write_long(fo, len(data) + 4)  # for CRC
+    # Add 4 bytes for the CRC32
+    write_long(fo, len(data) + 4)
     fo.write(data)
-    write_crc32(fo, block_bytes)
+    # Write the 4-byte, big-endian CRC32 checksum
+    crc = crc32(block_bytes) & 0xFFFFFFFF
+    fo.write(pack('>I', crc))
 
 
-BLOCK_WRITERS = {
-    'null': null_write_block,
-    'deflate': deflate_write_block
-}
+# ---- Schema Handling -------------------------------------------------------#
 
-if snappy:
-    BLOCK_WRITERS['snappy'] = snappy_write_block
+SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
 
 
 def acquaint_schema(schema, repo=None):
@@ -373,6 +359,23 @@ def acquaint_schema(schema, repo=None):
         lambda schema: schema,
     )
 
+
+def write_header(fo, metadata, sync_marker):
+    """Write the Avro header"""
+    # Note: values in the `meta` dict are written as bytes.
+    # See the definition of HEADER_SCHEMA in schema.py
+    header = {
+        'magic': MAGIC,
+        'meta': dict(
+            (k, v.encode('utf-8') if isinstance(v, _unicode_type) else v)
+            for k, v in iteritems(metadata)
+        ),
+        'sync': sync_marker,
+    }
+    write_data(fo, header, HEADER_SCHEMA)
+
+
+# ---- Public API - Writing Avro Files ---------------------------------------#
 
 def writer(fo,
            schema,
@@ -423,39 +426,55 @@ def writer(fo,
     >>> with open('weather.avro', 'wb') as out:
     >>>     writer(out, schema, records)
     """
-    sync_marker = urandom(SYNC_SIZE)
-    io = BytesIO()
-    block_count = 0
+    # Default values
+    codec = codec or 'null'
+    sync_interval = sync_interval or SYNC_INTERVAL
     metadata = metadata or {}
+
+    # Get block writer specified by `codec`
+    if codec == 'null':
+        block_writer = null_write_block
+    elif codec == 'deflate':
+        block_writer = deflate_write_block
+    elif codec == 'snappy':
+        if not snappy:
+            raise ValueError(
+                "Cannot write 'snappy' codec: 'snappy' module is not available"
+            )
+        block_writer = snappy_write_block
+    else:
+        raise ValueError('Unknown codec: %r' % codec)
+
+    # Write Avro header
+    sync_marker = urandom(SYNC_SIZE)
     metadata['avro.codec'] = codec
     metadata['avro.schema'] = json.dumps(schema)
-
-    try:
-        block_writer = BLOCK_WRITERS[codec]
-    except KeyError:
-        raise ValueError('unrecognized codec: %r' % codec)
-
-    def dump():
-        write_long(fo, block_count)
-        block_writer(fo, io.getvalue())
-        fo.write(sync_marker)
-        io.truncate(0)
-        io.seek(0, SEEK_SET)
-
     write_header(fo, metadata, sync_marker)
+
+    # Register the schema
     acquaint_schema(schema)
 
+    buf = BytesIO()
+    block_count = 0
+
     for record in records:
-        write_data(io, record, schema)
+        write_data(buf, record, schema)
         block_count += 1
-        if io.tell() >= sync_interval:
-            dump()
+        if buf.tell() >= sync_interval:
+            write_long(fo, block_count)
+            block_writer(fo, buf.getvalue())
+            fo.write(sync_marker)
+            buf.truncate(0)
+            buf.seek(0)
             block_count = 0
 
-    if io.tell() or block_count > 0:
-        dump()
+    if buf.tell() or block_count > 0:
+        write_long(fo, block_count)
+        block_writer(fo, buf.getvalue())
+        fo.write(sync_marker)
 
     fo.flush()
+    buf.close()
 
 
 def schemaless_writer(fo, schema, record):
