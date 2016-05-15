@@ -68,7 +68,7 @@ def write_boolean(fo, datum, schema=None):
     fo.write(pack('B', 1 if datum else 0))
 
 
-def write_int(fo, datum, schema=None):
+def write_long(fo, datum, schema=None):
     """int and long values are written using variable-length, zig-zag coding.
     """
     datum = (datum << 1) ^ (datum >> 63)
@@ -78,8 +78,8 @@ def write_int(fo, datum, schema=None):
     fo.write(pack('B', datum))
 
 
-# Alias `write_long` to `write_int`
-write_long = write_int
+# Alias `write_int` to `write_long`
+write_int = write_long
 
 
 def write_float(fo, datum, schema=None):
