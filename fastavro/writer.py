@@ -65,7 +65,7 @@ def write_null(fo, datum, schema=None):
 def write_boolean(fo, datum, schema=None):
     """A boolean is written as a single byte whose value is either 0 (false) or
     1 (true)."""
-    fo.write(pack('B', 1 if datum else 0))
+    fo.write(b'\x01' if datum else b'\x00')
 
 
 def write_long(fo, datum, schema=None):
@@ -108,7 +108,8 @@ def write_string(fo, datum, schema=None):
     byte_str = (
         datum.encode('utf-8') if isinstance(datum, _unicode_type) else datum
     )
-    write_bytes(fo, byte_str)
+    write_long(fo, len(byte_str))
+    fo.write(byte_str)
 
 
 # ---- Writing Avro complex types --------------------------------------------#
@@ -136,8 +137,9 @@ def write_array(fo, datum, schema):
     If a block's count is negative, then the count is followed immediately by a
     long block size, indicating the number of bytes in the block.  The actual
     count in this case is the absolute value of the count written.  """
-    if len(datum) > 0:
-        write_long(fo, len(datum))
+    datum_len = len(datum)
+    if datum_len:
+        write_long(fo, datum_len)
         dtype = schema['items']
         for item in datum:
             write_data(fo, item, dtype)
@@ -154,8 +156,9 @@ def write_map(fo, datum, schema):
     If a block's count is negative, then the count is followed immediately by a
     long block size, indicating the number of bytes in the block. The actual
     count in this case is the absolute value of the count written."""
-    if len(datum) > 0:
-        write_long(fo, len(datum))
+    datum_len = len(datum)
+    if datum_len:
+        write_long(fo, datum_len)
         vtype = schema['values']
         for key, val in iteritems(datum):
             write_string(fo, key)
