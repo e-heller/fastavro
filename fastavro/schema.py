@@ -17,7 +17,7 @@ import sys
 
 
 if sys.version_info[0] == 2:
-    _string_type = basestring
+    _string_type = basestring  # noqa
 else:
     _string_type = str
 

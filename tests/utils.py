@@ -3,6 +3,8 @@
 
 from __future__ import absolute_import
 
+# flake8: noqa
+
 import random
 import struct
 import sys

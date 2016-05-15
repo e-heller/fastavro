@@ -16,13 +16,13 @@
 
 from __future__ import absolute_import
 
+# flake8: noqa
+
 import sys
 
 
-# Python version
 PY2 = sys.version_info[0] == 2
 PY3 = sys.version_info[0] == 3
-
 
 if PY2:
     # Python 2 type aliases
@@ -32,7 +32,7 @@ if PY2:
     _int_types = (int, long)
     _number_types = (int, long, float)
 
-    from cStringIO import StringIO as BytesIO  # noqa
+    from cStringIO import StringIO as BytesIO
     xrange = xrange
 
     def py2_iteritems(obj):
@@ -45,7 +45,7 @@ else:
     _int_types = (int,)
     _number_types = (int, float)
 
-    from io import BytesIO  # noqa
+    from io import BytesIO
     xrange = range
 
     def py3_iteritems(obj):
