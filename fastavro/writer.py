@@ -58,19 +58,29 @@ LONG_MAX_VALUE = (1 << 63) - 1
 # ---- Writing Avro primitives -----------------------------------------------#
 
 def write_null(fo, datum, schema=None):
-    """null is written as zero bytes"""
+    """A `null` value is not written at all."""
     pass
 
 
 def write_boolean(fo, datum, schema=None):
-    """A boolean is written as a single byte whose value is either 0 (false) or
-    1 (true)."""
+    """A `boolean` value is written as a single byte: b'0x00' for False,
+    b'0x01' for True.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     fo.write(b'\x01' if datum else b'\x00')
 
 
 def write_long(fo, datum, schema=None):
-    """int and long values are written using variable-length, zig-zag coding.
-    """
+    """An `int` or `long` value is written as 32-bit or 64-bit integer,
+    respectively, using a variable-length zig-zag encoding. This is the same
+    encoding used in Google protobufs.
+
+    A good explanation of this encoding can be found at:
+        https://developers.google.com/protocol-buffers/docs/encoding#signed-integers
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     datum = (datum << 1) ^ (datum >> 63)
     while (datum & ~0x7F) != 0:
         fo.write(pack('B', (datum & 0x7f) | 0x80))
@@ -83,28 +93,45 @@ write_int = write_long
 
 
 def write_float(fo, datum, schema=None):
-    """A float is written as 4 bytes.  The float is converted into a 32-bit
-    integer using a method equivalent to Java's floatToIntBits and then encoded
-    in little-endian format."""
+    """A `float` value is written as a single precision 32-bit IEEE 754
+    floating-point value in little-endian format.
+
+    See the implementation of `_PyFloat_Pack4()` in Python's floatobject.c
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     fo.write(pack('<f', datum))
 
 
 def write_double(fo, datum, schema=None):
-    """A double is written as 8 bytes.  The double is converted into a 64-bit
-    integer using a method equivalent to Java's doubleToLongBits and then
-    encoded in little-endian format.  """
+    """A `double` value is written as a double precision 64-bit IEEE 754
+    floating-point value in little-endian format.
+
+    See the implementation of `_PyFloat_Pack8()` in Python's floatobject.c
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     fo.write(pack('<d', datum))
 
 
 def write_bytes(fo, datum, schema=None):
-    """Bytes are encoded as a long followed by that many bytes of data."""
+    """A `bytes` value is written as a `long` (length of the byte string),
+    immediately followed by the raw byte data.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     write_long(fo, len(datum))
     fo.write(datum)
 
 
 def write_string(fo, datum, schema=None):
-    """A string is encoded as a long followed by that many bytes of UTF-8
-    encoded character data."""
+    """A `string` value is written as a `long` (length of the UTF-8 encoded
+    string), immediately followed by the UTF-8 encoded byte data.
+
+    Note: Avro `string` values *must* be encoded to UTF-8 byte strings.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
+    """  # noqa
     byte_str = (
         datum.encode('utf-8') if isinstance(datum, _unicode_type) else datum
     )
@@ -115,28 +142,46 @@ def write_string(fo, datum, schema=None):
 # ---- Writing Avro complex types --------------------------------------------#
 
 def write_fixed(fo, datum, schema=None):
-    """Fixed instances are encoded using the number of bytes declared in the
-    schema."""
+    """A `fixed` value is written as raw bytes. The length of the byte data
+    is declared in the schema.
+
+    Note: we do not verify that the length of `datum` matches the length
+    declared in the `schema` (although perhaps we should). For now, this
+    responsibility is left to the user.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Fixed
+    """
     fo.write(datum)
 
 
 def write_enum(fo, datum, schema):
-    """An enum is encoded by a int, representing the zero-based position of
-    the symbol in the schema."""
+    """An `enum` value is written as an `int` representing the zero-based
+    position of the symbol in the schema.
+
+    Note: calling `.index(datum)` repeatedly is a bit inefficient. Instead, we
+    could precompute the index-offsets for each symbol and store it in a dict.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Enums
+    """
     index = schema['symbols'].index(datum)
     write_int(fo, index)
 
 
 def write_array(fo, datum, schema):
-    """Arrays are encoded as a series of blocks.
+    """An `array` value is written as a series of blocks.
 
-    Each block consists of a long count value, followed by that many array
-    items.  A block with count zero indicates the end of the array.  Each item
+    Each block consists of a `long` `count` value, followed by that many array
+    items. A block with `count` zero indicates the end of the array. Each item
     is encoded per the array's item schema.
 
-    If a block's count is negative, then the count is followed immediately by a
-    long block size, indicating the number of bytes in the block.  The actual
-    count in this case is the absolute value of the count written.  """
+    If a block's `count` is negative, then the count is followed immediately
+    by a `long` block size, indicating the number of bytes in the block. The
+    actual `count` in this case is the absolute value of the `count` written.
+
+    Note: this implementation does not support writing negative block counts.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Arrays
+    """
     datum_len = len(datum)
     if datum_len:
         write_long(fo, datum_len)
@@ -147,15 +192,23 @@ def write_array(fo, datum, schema):
 
 
 def write_map(fo, datum, schema):
-    """Maps are encoded as a series of blocks.
+    """A `map` value is written as a series of blocks.
 
-    Each block consists of a long count value, followed by that many key/value
-    pairs.  A block with count zero indicates the end of the map.  Each item is
-    encoded per the map's value schema.
+    Each block consists of a `long` `count` value, followed by that many
+    key / value pairs. A block with `count` zero indicates the end of the map.
 
-    If a block's count is negative, then the count is followed immediately by a
-    long block size, indicating the number of bytes in the block. The actual
-    count in this case is the absolute value of the count written."""
+    If a block's `count` is negative, then the `count` is followed immediately
+    by a `long` block size, indicating the number of bytes in the block. The
+    actual `count` in this case is the absolute value of the `count` written.
+
+    For writing the key / value pairs:
+        A map `key` is assumed to be string
+        A map `value` is written per the map's 'value' schema
+
+    Note: this implementation does not support writing negative block counts.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Maps
+    """
     datum_len = len(datum)
     if datum_len:
         write_long(fo, datum_len)
@@ -167,9 +220,12 @@ def write_map(fo, datum, schema):
 
 
 def write_union(fo, datum, schema):
-    """A union is encoded by first writing a long value indicating the
-    zero-based position within the union of the schema of its value. The value
-    is then encoded per the indicated schema within the union."""
+    """A `union` value is written as a `long` indicating the zero-based
+    position of the `value` in the union's schema, immediately followed by
+    the `value`, written per the indicated schema within the union.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#Unions
+    """
     for index, candidate in enumerate(schema):
         if validate(datum, candidate):
             break
@@ -183,10 +239,13 @@ def write_union(fo, datum, schema):
 
 
 def write_record(fo, datum, schema):
-    """A record is encoded by encoding the values of its fields in the order
-    that they are declared. In other words, a record is encoded as just the
-    concatenation of the encodings of its fields.  Field values are encoded per
-    their schema."""
+    """A `record` value is written by encoding the values of its fields in the
+    order in which they are declared. In other words, a `record` is written
+    as just the concatenation of the encodings of its fields. Field values
+    are encoded per their schema.
+
+    Reference: https://avro.apache.org/docs/current/spec.html#schema_record
+    """
     for field in schema['fields']:
         value = datum.get(field['name'], field.get('default'))
         write_data(fo, value, field['type'])
@@ -296,16 +355,17 @@ WRITERS = {
 
 
 def write_data(fo, datum, schema):
-    """Write a datum of data to output stream.
+    """Write a `datum` of data to the output stream `fo` using the
+    specified Avro `schema`.
 
     Paramaters
     ----------
-    fo: file like
-        Output file
+    fo: file-like object
+        Output file or stream
     datum: object
         Data to write
     schema: dict
-        Schemda to use
+        Avro Schema for `datum`
     """
     if isinstance(schema, dict):
         record_type = schema['type']
@@ -391,27 +451,28 @@ def writer(fo,
            codec='null',
            sync_interval=SYNC_INTERVAL,
            metadata=None):
-    """Write records to fo (stream) according to schema
+    """Write multiple `records` to the output stream `fo` using the
+    specified Avro `schema`.
 
     Paramaters
     ----------
-    fo: file like
-        Output stream
+    fo: file-like object
+        Output file or stream
+    schema: dict
+        An Avro schema, typically a dict
     records: iterable
         Records to write
     codec: string, optional
         Compression codec, can be 'null', 'deflate' or 'snappy' (if installed)
     sync_interval: int, optional
-        Size of sync interval
+        Size of sync interval. Defaults to fastavro.SYNC_INTERVAL
     metadata: dict, optional
-        Header metadata
-
+        Additional header metadata
 
     Example
     -------
-
-    >>> from fastavro import writer
-
+    >>> import fastavro
+    >>>
     >>> schema = {
     >>>     'doc': 'A weather reading.',
     >>>     'name': 'Weather',
@@ -423,16 +484,16 @@ def writer(fo,
     >>>         {'name': 'temp', 'type': 'int'},
     >>>     ],
     >>> }
-
+    >>>
     >>> records = [
     >>>     {u'station': u'011990-99999', u'temp': 0, u'time': 1433269388},
     >>>     {u'station': u'011990-99999', u'temp': 22, u'time': 1433270389},
     >>>     {u'station': u'011990-99999', u'temp': -11, u'time': 1433273379},
     >>>     {u'station': u'012650-99999', u'temp': 111, u'time': 1433275478},
     >>> ]
-
+    >>>
     >>> with open('weather.avro', 'wb') as out:
-    >>>     writer(out, schema, records)
+    >>>     fastavro.writer(out, schema, records)
     """
     # Default values
     codec = codec or 'null'
@@ -486,17 +547,18 @@ def writer(fo,
 
 
 def schemaless_writer(fo, schema, record):
-    """Write a single record without the schema or header information
+    """Write a single `record` to the output stream `fo` without
+    writing the Avro schema and header information.
 
     Paramaters
     ----------
-    fo: file like
-        Output file
+    fo: file-like object
+        Output file or stream
     schema: dict
-        Schema
+        Schema for `record`. (This is not written to the output stream,
+        however it is required for writing the `record`.)
     record: dict
         Record to write
-
     """
     acquaint_schema(schema)
     write_data(fo, record, schema)
