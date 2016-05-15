@@ -348,6 +348,11 @@ def snappy_write_block(fo, block_bytes):
 SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
 
 
+def get_schema_defs():
+    """Return the registered schema definitions."""
+    return SCHEMA_DEFS
+
+
 def acquaint_schema(schema, repo=None):
     """Extract schema into repo (default WRITERS)"""
     repo = WRITERS if repo is None else repo
