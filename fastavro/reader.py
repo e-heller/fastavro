@@ -111,30 +111,28 @@ def read_boolean(fo, writer_schema=None, reader_schema=None):
     """A boolean is written as a single byte whose value is either 0 (false) or
     1 (true).
     """
-
     # technically 0x01 == true and 0x00 == false, but many languages will cast
     # anything other than 0 to True and only 0 to False
-    return unpack('B', fo.read(1))[0] != 0
+    c = fo.read(1)
+    if not c:
+        raise EOFError("Failed to read 'boolean' value")
+    return c != b'\x00'
 
 
 def read_long(fo, writer_schema=None, reader_schema=None):
     """int and long values are written using variable-length, zig-zag
     coding."""
     c = fo.read(1)
-
     # We do EOF checking only here, since most reader start here
     if not c:
         raise StopIteration
-
     b = ord(c)
     n = b & 0x7F
     shift = 7
-
     while (b & 0x80) != 0:
         b = ord(fo.read(1))
         n |= (b & 0x7F) << shift
         shift += 7
-
     return (n >> 1) ^ -(n & 1)
 
 
@@ -206,28 +204,21 @@ def read_array(fo, writer_schema, reader_schema=None):
     long block size, indicating the number of bytes in the block.  The actual
     count in this case is the absolute value of the count written.
     """
-    if reader_schema:
-        def item_reader(fo, w_schema, r_schema):
-            return read_data(fo, w_schema['items'], r_schema['items'])
-    else:
-        def item_reader(fo, w_schema, _):
-            return read_data(fo, w_schema['items'])
-
-    read_items = []
+    w_item_schema = writer_schema['items']
+    r_item_schema = reader_schema['items'] if reader_schema else None
+    array_items = []
 
     block_count = read_long(fo)
-
-    while block_count != 0:
+    while block_count:
         if block_count < 0:
             block_count = -block_count
             # Read block size, unused
             read_long(fo)
 
         for i in xrange(block_count):
-            read_items.append(item_reader(fo, writer_schema, reader_schema))
+            array_items.append(read_data(fo, w_item_schema, r_item_schema))
         block_count = read_long(fo)
-
-    return read_items
+    return array_items
 
 
 def read_map(fo, writer_schema, reader_schema=None):
@@ -241,16 +232,12 @@ def read_map(fo, writer_schema, reader_schema=None):
     long block size, indicating the number of bytes in the block.  The actual
     count in this case is the absolute value of the count written.
     """
-    if reader_schema:
-        def item_reader(fo, w_schema, r_schema):
-            return read_data(fo, w_schema['values'], r_schema['values'])
-    else:
-        def item_reader(fo, w_schema, _):
-            return read_data(fo, w_schema['values'])
+    w_value_schema = writer_schema['values']
+    r_value_schema = reader_schema['values'] if reader_schema else None
+    map_items = {}
 
-    read_items = {}
     block_count = read_long(fo)
-    while block_count != 0:
+    while block_count:
         if block_count < 0:
             block_count = -block_count
             # Read block size, unused
@@ -258,10 +245,9 @@ def read_map(fo, writer_schema, reader_schema=None):
 
         for i in xrange(block_count):
             key = read_string(fo)
-            read_items[key] = item_reader(fo, writer_schema, reader_schema)
+            map_items[key] = read_data(fo, w_value_schema, r_value_schema)
         block_count = read_long(fo)
-
-    return read_items
+    return map_items
 
 
 def read_union(fo, writer_schema, reader_schema=None):
@@ -270,22 +256,21 @@ def read_union(fo, writer_schema, reader_schema=None):
 
     The value is then encoded per the indicated schema within the union.
     """
-    # schema resolution
     index = read_long(fo)
+    w_schema = writer_schema[index]
     if reader_schema:
-        # Handle case where the reader schema is just a single type (not union)
-        if not isinstance(reader_schema, list):
-            if match_types(writer_schema[index], reader_schema):
-                return read_data(fo, writer_schema[index], reader_schema)
-        else:
-            for schema in reader_schema:
-                if match_types(writer_schema[index], schema):
-                    return read_data(fo, writer_schema[index], schema)
-        msg = 'schema mismatch: %s not found in %s' % \
-            (writer_schema, reader_schema)
-        raise SchemaResolutionError(msg)
+        # Schema Resolution
+        r_schemas = (reader_schema if isinstance(reader_schema, list)
+                     else (reader_schema,))
+        for r_schema in r_schemas:
+            if match_types(w_schema, r_schema):
+                return read_data(fo, w_schema, r_schema)
+        raise SchemaResolutionError(
+            'Schema mismatch: %s cannot resolve to %s'
+            % (writer_schema, reader_schema)
+        )
     else:
-        return read_data(fo, writer_schema[index])
+        return read_data(fo, w_schema)
 
 
 def read_record(fo, writer_schema, reader_schema=None):
@@ -312,21 +297,22 @@ def read_record(fo, writer_schema, reader_schema=None):
         for field in writer_schema['fields']:
             record[field['name']] = read_data(fo, field['type'])
     else:
-        readers_field_dict = \
-            dict((f['name'], f) for f in reader_schema['fields'])
+        readers_field_dict = dict(
+            (f['name'], f) for f in reader_schema['fields']
+        )
         for field in writer_schema['fields']:
             readers_field = readers_field_dict.get(field['name'])
             if readers_field:
-                record[field['name']] = read_data(fo,
-                                                  field['type'],
-                                                  readers_field['type'])
+                record[field['name']] = read_data(
+                    fo, field['type'], readers_field['type']
+                )
             else:
                 # should implement skip
                 read_data(fo, field['type'], field['type'])
 
         # fill in default values
         if len(readers_field_dict) > len(record):
-            writer_fields = [f['name'] for f in writer_schema['fields']]
+            writer_fields = set(f['name'] for f in writer_schema['fields'])
             for field_name, field in iteritems(readers_field_dict):
                 if field_name not in writer_fields:
                     default = field.get('default')
@@ -335,7 +321,6 @@ def read_record(fo, writer_schema, reader_schema=None):
                     else:
                         msg = 'No default value for %s' % field['name']
                         raise SchemaResolutionError(msg)
-
     return record
 
 
@@ -575,6 +560,7 @@ class Reader(object):
             skip_sync(fo, sync_marker)
 
         block_buf.close()
+
 
 # For backwards compatability
 iter_avro = Reader
