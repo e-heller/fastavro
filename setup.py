@@ -1,3 +1,6 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
 try:
     from setuptools import setup
 except ImportError:
@@ -36,7 +39,7 @@ ext_errors = (CCompilerError, DistutilsExecError, DistutilsPlatformError,
 
 
 class maybe_build_ext(build_ext):
-    '''This class allows C extension building to fail.'''
+    """This class allows C extension building to fail."""
 
     def run(self):
         try:
@@ -51,10 +54,17 @@ class maybe_build_ext(build_ext):
             log.info('cannot bulid C extension, will continue without.')
 
 
-if sys.version_info[:2] > (2, 6):
-    install_requires = []
-else:
-    install_requires = ['argparse']
+install_requires = []
+if sys.version_info[:2] < (2, 7):
+    # `argparse` is not in the standard library for Python < 2.7
+    install_requires.append('argparse')
+
+
+tests_require = ['nose', 'flake8']
+if sys.version_info[0] < 3:
+    # Some tests require 'unittest2' on Python 2.x
+    tests_require.append('unittest2')
+
 
 # Don't compile extension under pypy
 # See https://bitbucket.org/pypy/pypy/issue/1770
@@ -71,12 +81,12 @@ if hasattr(sys, 'pypy_version_info'):
 setup(
     name='fastavro',
     version=version(),
-    description='Fast read/write of AVRO files',
+    description='Faster reading and writing Apache Avro files',
     long_description=open('README.md').read(),
-    author='Miki Tebeka',
-    author_email='miki.tebeka@gmail.com',
+    author='Eric Heller',
+    author_email='eheller@gmail.com',
     license='MIT',
-    url='https://github.com/tebeka/fastavro',
+    url='https://github.com/e-heller/fastavro',
     packages=['fastavro'],
     ext_modules=ext_modules,
     cmdclass={'build_ext': maybe_build_ext},
@@ -99,6 +109,7 @@ setup(
     install_requires=install_requires,
     extras_require={
         'snappy': ['python-snappy'],
+        'simplejson': ['simplejson'],
     },
-    tests_require=['nose', 'flake8'],
+    tests_require=tests_require,
 )
