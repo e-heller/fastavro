@@ -44,12 +44,11 @@ Reading from Avro format
 ```python
 import fastavro
 
-with open('some_file.avro', 'rb') as fo:
+with open('some_file.avro', 'rb') as input:
+    # Create a `Reader` object
+    reader = fastavro.Reader(input)
 
-    # Create a `reader` object to iterate over the records:
-    reader = fastavro.Reader(fo)
-
-    # Obtain the file's Schema if you need it:
+    # Obtain the writer's schema if required
     schema = reader.schema
 
     # Iteratively read the records:
