@@ -165,10 +165,12 @@ required.)
 
 If you decide to modify any `fastavro/*.pyx` file, then you will
 require:
+
 1. [Cython][cython_pypi] to regenerate the C files
 2. Some kind of C compiler like `gcc` on Unix-y platforms
 
-> *Note:* I have tested and successfully compiled with MSVC on Windows.
+   > Note: I have also tested and successfully compiled with MSVC
+   on Windows.
 
 Rebuilding the C extensions is easy. First, regenerate the C files.
 With the provided Makefile, you can just type `make cfiles`, which 
@@ -187,7 +189,7 @@ $ make cfiles
 $ python setup.py build_ext -i
 ```
 
-Currently, you can just enter `make` to do all of the above:
+Currently, you can also just enter `make` to do all of the above:
 ```bash
 $ make
 ```
