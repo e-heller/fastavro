@@ -1,9 +1,19 @@
+# -*- coding: utf-8 -*-
+"""Python3 string tests for fastavro"""
+
+from __future__ import absolute_import
+
 from os import SEEK_SET
 from random import choice, seed
 from string import ascii_uppercase, digits
 
+try:
+    from cStringIO import StringIO as BytesIO
+except ImportError:
+    from io import BytesIO
+
 import fastavro
-from fastavro.compat import BytesIO
+
 
 letters = ascii_uppercase + digits
 id_size = 100
@@ -39,6 +49,7 @@ def test_str_py3():
 
     assert i == size, 'bad number of records'
     assert rec == testdata[-1], 'bad last record'
+
 
 if __name__ == '__main__':
     test_str_py3()
