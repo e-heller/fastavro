@@ -18,6 +18,7 @@ except ImportError:
     snappy = None
 
 import fastavro
+from fastavro import ReadError, UnknownType, SchemaResolutionError, SchemaError
 
 from tests.utils import (
     random_byte_str, random_unicode_str, _unicode_type, _bytes_type,
@@ -30,6 +31,26 @@ NO_DATA = set([
     'class org.apache.avro.tool.TestDataFileTools.zerojsonvalues.avro',
     'testDataFileMeta.avro',
 ])
+
+
+def _exc_name(exc):
+    cls = getattr(exc, '__class__', None)
+    cls_name = getattr(cls, '__name__', None) if cls else None
+    if cls_name and cls_name != 'type':
+        return str(cls_name)
+    name = getattr(exc, '__name__', None)
+    if name:
+        return str(name)
+    return str(type(exc))
+
+
+class UnexpectedException(AssertionError):
+    def __init__(self, expected, raised):
+        msg = (
+            "Expected '%s' Exception. '%s' raised instead"
+            % (_exc_name(expected), _exc_name(raised))
+        )
+        super(UnexpectedException, self).__init__(msg)
 
 
 class NoSeekBytesIO(object):
@@ -91,11 +112,12 @@ def test_not_avro():
     try:
         with open(__file__, 'rb') as fo:
             fastavro.reader(fo)
-        assert False, 'ValueError not raised: Opened non-avro file'
-    except ValueError:
+    except ReadError:
         pass
     except Exception as exc:
-        assert False, 'Expected ValueError: %s raised instead' % type(exc)
+        raise UnexpectedException(ReadError, exc)
+    else:
+        assert False, 'ReadError not raised: Opened non-avro file'
 
 
 def test_acquaint_schema_rejects_undeclared_name():
@@ -108,11 +130,12 @@ def test_acquaint_schema_rejects_undeclared_name():
                 'type': 'Thinger',
             }],
         })
-        assert False, 'UnknownType not raised'
-    except fastavro.UnknownType as e:
+    except UnknownType as e:
         assert 'Thinger' == e.name
     except Exception as exc:
-        assert False, 'Expected UnknownType: %s raised instead' % type(exc)
+        raise UnexpectedException(UnknownType, exc)
+    else:
+        assert False, 'UnknownType not raised'
 
 
 def test_acquaint_schema_rejects_unordered_references():
@@ -135,11 +158,12 @@ def test_acquaint_schema_rejects_unordered_references():
                 },
             }],
         })
-        assert False, 'UnknownType not raised'
-    except fastavro.UnknownType as e:
+    except UnknownType as e:
         assert 'Thinger' == e.name
     except Exception as exc:
-        assert False, 'Expected ValueError: %s raised instead' % type(exc)
+        raise UnexpectedException(UnknownType, exc)
+    else:
+        assert False, 'UnknownType not raised'
 
 
 def test_acquaint_schema_accepts_nested_namespaces():
@@ -238,12 +262,13 @@ def test_acquaint_schema_rejects_record_without_name():
             'type': 'record',
             'fields': [{'name': 'test', 'type': 'int'}],
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('record', 'name'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
 
 def test_acquaint_schema_rejects_record_without_fields():
@@ -254,12 +279,13 @@ def test_acquaint_schema_rejects_record_without_fields():
             'type': 'record',
             'name': 'record_test',
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('record', 'fields'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
     # However an empty list is OK
     try:
@@ -268,7 +294,7 @@ def test_acquaint_schema_rejects_record_without_fields():
             'name': 'record_test',
             'fields': [],
         })
-    except fastavro.SchemaError:
+    except SchemaError:
         assert False, 'No SchemaError should be raised'
 
 
@@ -284,12 +310,13 @@ def test_acquaint_schema_rejects_record_fields_without_name():
                 {'type': 'int'},
             ]
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('record', 'field', 'name'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
 
 def test_acquaint_schema_rejects_record_fields_without_type():
@@ -301,12 +328,13 @@ def test_acquaint_schema_rejects_record_fields_without_type():
             'name': 'record_test',
             'fields': [{'name': 'test'}],
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('record', 'field', 'type'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
 
 def test_acquaint_schema_rejects_enum_without_name():
@@ -317,12 +345,13 @@ def test_acquaint_schema_rejects_enum_without_name():
             'type': 'enum',
             'symbols': ['foo', 'bar', 'baz'],
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('enum', 'name'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
 
 def test_acquaint_schema_rejects_enum_without_symbols():
@@ -333,12 +362,13 @@ def test_acquaint_schema_rejects_enum_without_symbols():
             'type': 'enum',
             'name': 'enum_test',
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('enum', 'symbols'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
     # However an empty list is OK (maybe it should be rejected?)
     try:
@@ -347,7 +377,7 @@ def test_acquaint_schema_rejects_enum_without_symbols():
             'name': 'enum_test',
             'symbols': [],
         })
-    except fastavro.SchemaError:
+    except SchemaError:
         assert False, 'No SchemaError should be raised'
 
 
@@ -359,12 +389,13 @@ def test_acquaint_schema_rejects_fixed_without_name():
             'type': 'fixed',
             'size': 32,
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('fixed', 'name'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
 
 def test_acquaint_schema_rejects_fixed_without_size():
@@ -375,12 +406,13 @@ def test_acquaint_schema_rejects_fixed_without_size():
             'type': 'fixed',
             'name': 'fixed_test',
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('fixed', 'size'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
     # However a zero 'size' is OK (maybe it should be rejected?)
     try:
@@ -389,7 +421,7 @@ def test_acquaint_schema_rejects_fixed_without_size():
             'name': 'fixed_test',
             'size': 0
         })
-    except fastavro.SchemaError:
+    except SchemaError:
         assert False, 'No SchemaError should be raised'
 
 
@@ -400,12 +432,13 @@ def test_acquaint_schema_rejects_array_without_items():
         fastavro.acquaint_schema({
             'type': 'array',
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('array', 'items'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
     # However an empty list is OK (maybe it should be rejected?)
     try:
@@ -413,7 +446,7 @@ def test_acquaint_schema_rejects_array_without_items():
             'type': 'array',
             'items': [],
         })
-    except fastavro.SchemaError:
+    except SchemaError:
         assert False, 'No SchemaError should be raised'
 
 
@@ -424,12 +457,13 @@ def test_acquaint_schema_rejects_map_without_values():
         fastavro.acquaint_schema({
             'type': 'map',
         })
-        assert False, 'SchemaError not raised'
-    except fastavro.SchemaError as exc:
+    except SchemaError as exc:
         check = _check_exception(exc, ('map', 'values'), True)
         assert check, 'Incorrect SchemaError raised: %s' % exc
     except Exception as exc:
-        assert False, 'Expected SchemaError: %s raised instead' % type(exc)
+        raise UnexpectedException(SchemaError, exc)
+    else:
+        assert False, 'SchemaError not raised'
 
     # However an empty list is OK (maybe it should be rejected?)
     try:
@@ -437,7 +471,7 @@ def test_acquaint_schema_rejects_map_without_values():
             'type': 'map',
             'values': [],
         })
-    except fastavro.SchemaError:
+    except SchemaError:
         assert False, 'No SchemaError should be raised'
 
 
@@ -883,12 +917,12 @@ def test_schema_migration_reader_union_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-        assert False, 'SchemaResolutionError not raised'
-    except fastavro.SchemaResolutionError:
+    except SchemaResolutionError:
         pass
     except Exception as exc:
-        assert False, ('Expected SchemaResolutionError: %s raised instead'
-                       % type(exc))
+        raise UnexpectedException(SchemaResolutionError, exc)
+    else:
+        assert False, 'SchemaResolutionError not raised'
 
 
 def test_schema_migration_writer_union_failure():
@@ -917,12 +951,12 @@ def test_schema_migration_writer_union_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-        assert False, 'SchemaResolutionError not raised'
-    except fastavro.SchemaResolutionError:
+    except SchemaResolutionError:
         pass
     except Exception as exc:
-        assert False, ('Expected SchemaResolutionError: %s raised instead'
-                       % type(exc))
+        raise UnexpectedException(SchemaResolutionError, exc)
+    else:
+        assert False, 'SchemaResolutionError not raised'
 
 
 def test_schema_migration_array_failure():
@@ -957,12 +991,12 @@ def test_schema_migration_array_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-        assert False, 'SchemaResolutionError not raised'
-    except fastavro.SchemaResolutionError:
+    except SchemaResolutionError:
         pass
     except Exception as exc:
-        assert False, ('Expected SchemaResolutionError: %s raised instead'
-                       % type(exc))
+        raise UnexpectedException(SchemaResolutionError, exc)
+    else:
+        assert False, 'SchemaResolutionError not raised'
 
 
 def test_schema_migration_maps_failure():
@@ -997,12 +1031,12 @@ def test_schema_migration_maps_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-        assert False, 'SchemaResolutionError not raised'
-    except fastavro.SchemaResolutionError:
+    except SchemaResolutionError:
         pass
     except Exception as exc:
-        assert False, ('Expected SchemaResolutionError: %s raised instead'
-                       % type(exc))
+        raise UnexpectedException(SchemaResolutionError, exc)
+    else:
+        assert False, 'SchemaResolutionError not raised'
 
 
 def test_schema_migration_enum_failure():
@@ -1025,12 +1059,12 @@ def test_schema_migration_enum_failure():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-        assert False, 'SchemaResolutionError not raised'
-    except fastavro.SchemaResolutionError:
+    except SchemaResolutionError:
         pass
     except Exception as exc:
-        assert False, ('Expected SchemaResolutionError: %s raised instead'
-                       % type(exc))
+        raise UnexpectedException(SchemaResolutionError, exc)
+    else:
+        assert False, 'SchemaResolutionError not raised'
 
 
 def test_schema_migration_schema_mismatch():
@@ -1056,12 +1090,12 @@ def test_schema_migration_schema_mismatch():
     new_reader = fastavro.reader(new_file, new_schema)
     try:
         list(new_reader)
-        assert False, 'SchemaResolutionError not raised'
-    except fastavro.SchemaResolutionError:
+    except SchemaResolutionError:
         pass
     except Exception as exc:
-        assert False, ('Expected SchemaResolutionError: %s raised instead'
-                       % type(exc))
+        raise UnexpectedException(SchemaResolutionError, exc)
+    else:
+        assert False, 'SchemaResolutionError not raised'
 
 
 def test_empty():
@@ -1075,11 +1109,12 @@ def test_empty():
     }
     try:
         fastavro.load(io, schema)
-        assert False, 'ReadError not raised: Read from an empty file'
-    except fastavro.ReadError:
+    except ReadError:
         pass
     except Exception as exc:
-        assert False, 'Expected ReadError: %s raised instead' % type(exc)
+        raise UnexpectedException(ReadError, exc)
+    else:
+        assert False, 'ReadError not raised: Read from an empty file'
 
 
 def test_fixed_roundtrip():
@@ -1166,11 +1201,11 @@ def test_string_with_non_unicode_values_roundtrip():
 
     records = [{
         'test1': b'Obviously safe ascii string',
-        # UTF-8 encoded "быстрый" (~= 'fast' in Russian)
+        # UTF-8 encoded Cyrillic chars
         'test2': b'\xd0\xb1\xd1\x8b\xd1\x81\xd1\x82\xd1\x80\xd1\x8b\xd0\xb9',
     }, {
         'test1': b'Not\x09Obviously\x0AUTF-8 Safe',
-        # UTF-8 encoded "γρήγορος" (~= 'fast' in Greek)
+        # UTF-8 encoded Greek chars
         'test2': b'\xce\xb3\xcf\x81\xce\xae\xce\xb3\xce\xbf\xcf\x81\xce\xbf\xcf\x82',  # noqa
     }]
     new_file = BytesIO()
