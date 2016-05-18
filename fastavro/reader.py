@@ -47,11 +47,11 @@ class SchemaResolutionError(Exception):
     pass
 
 
-class ReadError(ValueError):
-    def __init__(self, msg, orig_exc=None):
-        ValueError.__init__(self, msg, orig_exc)
+class ReadError(Exception):
+    def __init__(self, msg, original_exc=None):
+        super(ReadError, self).__init__(msg, original_exc)
         self.msg = msg
-        self.orig_exc = orig_exc
+        self.original_exc = original_exc
 
 
 # ---- Schema Resolution / Matching ------------------------------------------#
@@ -164,7 +164,7 @@ def read_boolean(fo, writer_schema=None, reader_schema=None):
     # cast anything other than 0 to True and only 0 to False
     c = fo.read(1)
     if not c:
-        raise EOFError("Failed to read 'boolean' value")
+        raise EOFError("EOF in read_boolean")
     return c != b'\x00'
 
 
@@ -180,7 +180,7 @@ def read_long(fo, writer_schema=None, reader_schema=None):
     """  # noqa
     c = fo.read(1)
     if not c:
-        raise EOFError("Failed to read 'long' value")
+        raise EOFError("EOF in read_long")
     b = ord(c)
     n = b & 0x7F
     shift = 7
@@ -468,7 +468,7 @@ def read_data(fo, writer_schema, reader_schema=None):
 
     try:
         return READERS[record_type](fo, writer_schema, reader_schema)
-    except (SchemaResolutionError, ReadError):
+    except SchemaResolutionError:
         raise
     except Exception as exc:
         raise ReadError(
