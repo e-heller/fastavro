@@ -86,7 +86,7 @@ def read_write_file(filename):
     serialized_data = write_buf.getvalue()
     write_buf.close()
 
-    read_buf = NoSeekBytesIO(serialized_data)
+    read_buf = BytesIO(serialized_data)
     read_back = fastavro.reader(read_buf)
     assert hasattr(read_back, 'schema'), 'Schema was not written'
     assert read_back.schema == reader.schema
@@ -96,7 +96,7 @@ def read_write_file(filename):
     read_buf.close()
 
     # Test schema migration with the same schema
-    read_buf = NoSeekBytesIO(serialized_data)
+    read_buf = BytesIO(serialized_data)
     schema_migration_reader = fastavro.reader(read_buf, reader.schema)
     assert schema_migration_reader.reader_schema == reader.schema
     new_records = list(schema_migration_reader)
