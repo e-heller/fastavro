@@ -157,12 +157,12 @@ cdef inline match_schemas(w_schema, r_schema):
 
 # ---- Reading Avro primitives -----------------------------------------------#
 
-cdef inline read_null(Stream fo, writer_schema, reader_schema):
+cdef inline read_null(Stream stream, writer_schema, reader_schema):
     """A `null` value is not written at all."""
     return None
 
 
-cdef inline read_boolean(Stream fo, writer_schema, reader_schema):
+cdef inline read_boolean(Stream stream, writer_schema, reader_schema):
     """A `boolean` value is written as a single byte: b'0x00' for False,
     b'0x01' for True.
 
@@ -170,13 +170,13 @@ cdef inline read_boolean(Stream fo, writer_schema, reader_schema):
     """  # noqa
     # Although technically 0x01 == True and 0x00 == False, many languages will
     # cast anything other than 0 to True and only 0 to False
-    c = fo.read(1)
+    c = stream.read(1)
     if not c:
         raise EOFError("EOF in read_boolean")
     return c != b'\x00'
 
 
-cdef inline read_int(Stream fo, writer_schema, reader_schema):
+cdef inline read_int(Stream stream, writer_schema, reader_schema):
     """An `int` value is written as 32-bit integer, using a variable-length
     zig-zag encoding. This is the same encoding used in Google protobufs.
 
@@ -191,7 +191,7 @@ cdef inline read_int(Stream fo, writer_schema, reader_schema):
     cdef uchar* buf
     cdef SSize_t data_len
     # The longest possible encoding for an `int` is 5 bytes
-    buf = fo.read_chars(5, &data_len)
+    buf = stream.read_chars(5, &data_len)
     if not data_len or not buf:
         raise EOFError("EOF in read_int")
     b = buf[0]
@@ -203,11 +203,11 @@ cdef inline read_int(Stream fo, writer_schema, reader_schema):
         n |= (b & 0x7F) << (i * 7)
         i += 1
     # Seek back if all 5 bytes were not used
-    fo.seek_to(i - data_len, cSEEK_CUR)
+    stream.seek_to(i - data_len, cSEEK_CUR)
     return <int32_t>((n >> 1) ^ -(n & 1))
 
 
-cdef inline read_long(Stream fo, writer_schema, reader_schema):
+cdef inline read_long(Stream stream, writer_schema, reader_schema):
     """A `long` value is written as 64-bit integer, using a variable-length
     zig-zag encoding. This is the same encoding used in Google protobufs.
 
@@ -222,7 +222,7 @@ cdef inline read_long(Stream fo, writer_schema, reader_schema):
     cdef uchar* buf
     cdef SSize_t data_len
     # The longest possible encoding for a `long` is 10 bytes
-    buf = fo.read_chars(10, &data_len)
+    buf = stream.read_chars(10, &data_len)
     if not data_len or not buf:
         raise EOFError("EOF in read_long")
     b = buf[0]
@@ -234,11 +234,11 @@ cdef inline read_long(Stream fo, writer_schema, reader_schema):
         n |= (b & 0x7F) << (i * 7)
         i += 1
     # Seek back if all 10 bytes were not used
-    fo.seek_to(i - data_len, cSEEK_CUR)
+    stream.seek_to(i - data_len, cSEEK_CUR)
     return <int64_t>((n >> 1) ^ -(n & 1))
 
 
-cdef inline read_float(Stream fo, writer_schema, reader_schema):
+cdef inline read_float(Stream stream, writer_schema, reader_schema):
     """A `float` value is written as a single precision 32-bit IEEE 754
     floating-point value in little-endian format.
 
@@ -252,7 +252,7 @@ cdef inline read_float(Stream fo, writer_schema, reader_schema):
     cdef int i = 0
     cdef float f
     cdef uchar* f_cp = <uchar*>&f
-    buf = fo.read_chars(4, &data_len)
+    buf = stream.read_chars(4, &data_len)
     if not buf or data_len != 4:
         raise EOFError("EOF in read_float")
     if float_format == little:
@@ -267,7 +267,7 @@ cdef inline read_float(Stream fo, writer_schema, reader_schema):
         return unpack('<f', <bytes>buf)[0]
 
 
-cdef inline read_double(Stream fo, writer_schema, reader_schema):
+cdef inline read_double(Stream stream, writer_schema, reader_schema):
     """A `double` value is written as a double precision 64-bit IEEE 754
     floating-point value in little-endian format.
 
@@ -281,7 +281,7 @@ cdef inline read_double(Stream fo, writer_schema, reader_schema):
     cdef int i = 0
     cdef double d
     cdef uchar* d_cp = <uchar*>&d
-    buf = fo.read_chars(8, &data_len)
+    buf = stream.read_chars(8, &data_len)
     if not buf or data_len != 8:
         raise EOFError("EOF in read_double")
     if double_format == little:
@@ -296,21 +296,21 @@ cdef inline read_double(Stream fo, writer_schema, reader_schema):
         return unpack('<d', <bytes>buf)[0]
 
 
-cdef inline read_bytes(Stream fo, writer_schema, reader_schema):
+cdef inline read_bytes(Stream stream, writer_schema, reader_schema):
     """A `bytes` value is written as a `long` (length of the byte string),
     immediately followed by the raw byte data.
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    cdef int64_t size = read_long(fo, None, None)
+    cdef int64_t size = read_long(stream, None, None)
     if reader_schema == 'string':
         # Schema Resolution: promote to unicode string
-        return fo.read(size).decode('utf-8')
+        return stream.read(size).decode('utf-8')
     else:
-        return fo.read(size)
+        return stream.read(size)
 
 
-cdef inline read_string(Stream fo, writer_schema, reader_schema):
+cdef inline read_string(Stream stream, writer_schema, reader_schema):
     """A `string` value is written as a `long` (length of the UTF-8 encoded
     string), immediately followed by the UTF-8 encoded byte data.
 
@@ -318,8 +318,8 @@ cdef inline read_string(Stream fo, writer_schema, reader_schema):
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    cdef int64_t size = read_long(fo, None, None)
-    cdef bytes byte_str = fo.read(size)
+    cdef int64_t size = read_long(stream, None, None)
+    cdef bytes byte_str = stream.read(size)
     if reader_schema == 'bytes':
         # Schema Resolution: promote to byte string
         return byte_str
@@ -329,22 +329,22 @@ cdef inline read_string(Stream fo, writer_schema, reader_schema):
 
 # ---- Reading Avro complex types --------------------------------------------#
 
-cdef inline read_fixed(Stream fo, dict writer_schema, reader_schema):
+cdef inline read_fixed(Stream stream, dict writer_schema, reader_schema):
     """A `fixed` value is written as raw bytes. The length of the byte data
     is declared in the schema.
 
     Reference: https://avro.apache.org/docs/current/spec.html#Fixed
     """
-    return fo.read(writer_schema['size'])
+    return stream.read(writer_schema['size'])
 
 
-cdef inline read_enum(Stream fo, dict writer_schema, reader_schema):
+cdef inline read_enum(Stream stream, dict writer_schema, reader_schema):
     """An `enum` value is written as an `int` representing the zero-based
     position of the symbol in the schema.
 
     Reference: https://avro.apache.org/docs/current/spec.html#Enums
     """
-    index = read_int(fo, None, None)
+    index = read_int(stream, None, None)
     symbol = writer_schema['symbols'][index]
     if reader_schema and symbol not in reader_schema['symbols']:
         # Schema Resolution: 'If the writer's symbol is not present in the
@@ -355,7 +355,7 @@ cdef inline read_enum(Stream fo, dict writer_schema, reader_schema):
     return symbol
 
 
-cdef read_array(Stream fo, writer_schema, reader_schema):
+cdef read_array(Stream stream, writer_schema, reader_schema):
     """An `array` value is written as a series of blocks.
 
     Each block consists of a `long` `count` value, followed by that many array
@@ -373,20 +373,20 @@ cdef read_array(Stream fo, writer_schema, reader_schema):
     array_items = []
 
     cdef int64_t block_count, i
-    block_count = read_long(fo, None, None)
+    block_count = read_long(stream, None, None)
     while block_count:
         if block_count < 0:
             block_count = -block_count
             # Read block size, unused
-            read_long(fo, None, None)
+            read_long(stream, None, None)
 
         for i in xrange(block_count):
-            array_items.append(read_data(fo, w_item_schema, r_item_schema))
-        block_count = read_long(fo, None, None)
+            array_items.append(read_data(stream, w_item_schema, r_item_schema))
+        block_count = read_long(stream, None, None)
     return array_items
 
 
-cdef read_map(Stream fo, writer_schema, reader_schema):
+cdef read_map(Stream stream, writer_schema, reader_schema):
     """A `map` value is written as a series of blocks.
 
     Each block consists of a `long` `count` value, followed by that many
@@ -407,28 +407,28 @@ cdef read_map(Stream fo, writer_schema, reader_schema):
     map_items = {}
 
     cdef int64_t block_count, i
-    block_count = read_long(fo, None, None)
+    block_count = read_long(stream, None, None)
     while block_count:
         if block_count < 0:
             block_count = -block_count
             # Read block size, unused
-            read_long(fo, None, None)
+            read_long(stream, None, None)
 
         for i in xrange(block_count):
-            key = read_string(fo, None, None)
-            map_items[key] = read_data(fo, w_value_schema, r_value_schema)
-        block_count = read_long(fo, None, None)
+            key = read_string(stream, None, None)
+            map_items[key] = read_data(stream, w_value_schema, r_value_schema)
+        block_count = read_long(stream, None, None)
     return map_items
 
 
-cdef read_union(Stream fo, writer_schema, reader_schema):
+cdef read_union(Stream stream, writer_schema, reader_schema):
     """A `union` value is written as a `long` indicating the zero-based
     position of the `value` in the union's schema, immediately followed by
     the `value`, written per the indicated schema within the union.
 
     Reference: https://avro.apache.org/docs/current/spec.html#Unions
     """
-    index = read_long(fo, None, None)
+    index = read_long(stream, None, None)
     w_schema = writer_schema[index]
     if reader_schema:
         # Schema Resolution
@@ -436,16 +436,16 @@ cdef read_union(Stream fo, writer_schema, reader_schema):
                      else (reader_schema,))
         for r_schema in r_schemas:
             if match_schemas(w_schema, r_schema):
-                return read_data(fo, w_schema, r_schema)
+                return read_data(stream, w_schema, r_schema)
         raise SchemaResolutionError(
             'Schema mismatch: %s cannot resolve to %s'
             % (writer_schema, reader_schema)
         )
     else:
-        return read_data(fo, w_schema, None)
+        return read_data(stream, w_schema, None)
 
 
-cdef read_record(Stream fo, writer_schema, reader_schema):
+cdef read_record(Stream stream, writer_schema, reader_schema):
     """A `record` value is written by encoding the values of its fields in the
     order in which they are declared. In other words, a `record` is written
     as just the concatenation of the encodings of its fields. Field values
@@ -471,7 +471,7 @@ cdef read_record(Stream fo, writer_schema, reader_schema):
     record = {}
     if reader_schema is None:
         for field in writer_schema['fields']:
-            record[field['name']] = read_data(fo, field['type'], None)
+            record[field['name']] = read_data(stream, field['type'], None)
     else:
         readers_field_dict = dict(
             (f['name'], f) for f in reader_schema['fields']
@@ -480,11 +480,11 @@ cdef read_record(Stream fo, writer_schema, reader_schema):
             readers_field = readers_field_dict.get(field['name'])
             if readers_field:
                 record[field['name']] = read_data(
-                    fo, field['type'], readers_field['type']
+                    stream, field['type'], readers_field['type']
                 )
             else:
                 # should implement skip
-                read_data(fo, field['type'], field['type'])
+                read_data(stream, field['type'], field['type'])
 
         # fill in default values
         if len(readers_field_dict) > len(record):
@@ -544,7 +544,7 @@ cdef dict READERS = {
 
 
 cpdef py_read_data(stream, writer_schema, reader_schema=None):
-    """Read data from the input stream `stream`, according to the Schema
+    """Read data from the input `stream` according to the specified Avro
     `writer_schema`, optionally migrating to the `reader_schema` if provided.
 
     Paramaters
@@ -557,13 +557,13 @@ cpdef py_read_data(stream, writer_schema, reader_schema=None):
         Avro "reader's schema"
     """
     # This function is callable from Python
-    cdef StreamWrapper fo = StreamWrapper(stream)
-    read_data(fo, writer_schema, reader_schema)
+    cdef StreamWrapper stream_ = StreamWrapper(stream)
+    read_data(stream_, writer_schema, reader_schema)
 
 
-cdef read_data(Stream fo, writer_schema, reader_schema):
-    """Read data from the input stream `stream`, according to the Schema
-    `writer_schema`, optionally migrating to the`reader_schema` if provided.
+cdef read_data(Stream stream, writer_schema, reader_schema):
+    """Read data from the input `stream` according to the specified Avro
+    `writer_schema`, optionally migrating to the `reader_schema` if provided.
     See full documentation in `py_read_data`
     """
     if isinstance(writer_schema, dict):
@@ -584,43 +584,43 @@ cdef read_data(Stream fo, writer_schema, reader_schema):
 
     try:
         if h_type == h_long:
-            return read_long(fo, writer_schema, reader_schema)
+            return read_long(stream, writer_schema, reader_schema)
 
         elif h_type in (h_record, h_error):
-            return read_record(fo, writer_schema, reader_schema)
+            return read_record(stream, writer_schema, reader_schema)
 
         elif h_type == h_string:
-            return read_string(fo, writer_schema, reader_schema)
+            return read_string(stream, writer_schema, reader_schema)
 
         elif h_type == h_int:
-            return read_int(fo, writer_schema, reader_schema)
+            return read_int(stream, writer_schema, reader_schema)
 
         elif h_type == h_double:
-            return read_double(fo, writer_schema, reader_schema)
+            return read_double(stream, writer_schema, reader_schema)
 
         elif h_type == h_float:
-            return read_float(fo, writer_schema, reader_schema)
+            return read_float(stream, writer_schema, reader_schema)
 
         elif h_type == h_bytes:
-            return read_bytes(fo, writer_schema, reader_schema)
+            return read_bytes(stream, writer_schema, reader_schema)
 
         elif h_type == h_boolean:
-            return read_boolean(fo, None, None)
+            return read_boolean(stream, None, None)
 
         elif h_type == h_fixed:
-            return read_fixed(fo, writer_schema, None)
+            return read_fixed(stream, writer_schema, None)
 
         elif h_type in (h_union, h_error_union):
-            return read_union(fo, writer_schema, reader_schema)
+            return read_union(stream, writer_schema, reader_schema)
 
         elif h_type == h_map:
-            return read_map(fo, writer_schema, reader_schema)
+            return read_map(stream, writer_schema, reader_schema)
 
         elif h_type == h_array:
-            return read_array(fo, writer_schema, reader_schema)
+            return read_array(stream, writer_schema, reader_schema)
 
         elif h_type == h_enum:
-            return read_enum(fo, writer_schema, reader_schema)
+            return read_enum(stream, writer_schema, reader_schema)
 
         elif h_type == h_null:
             # `read_null` simply returns None
@@ -628,7 +628,7 @@ cdef read_data(Stream fo, writer_schema, reader_schema):
 
         else:
             print("Type not found for: %s" % record_type)
-            return READERS[record_type](fo, writer_schema, reader_schema)
+            return READERS[record_type](stream, writer_schema, reader_schema)
 
     except SchemaResolutionError:
         raise
@@ -644,19 +644,19 @@ cdef read_data(Stream fo, writer_schema, reader_schema):
 ctypedef object (*block_reader_t)(Stream, ByteBuffer)
 
 
-cdef null_read_block(Stream fo, ByteBuffer buffer):
+cdef null_read_block(Stream stream, ByteBuffer buffer):
     """Read a block of data with no codec ('null' codec)."""
-    cdef int64_t block_len = read_long(fo, None, None)
-    data = fo.read(block_len)
+    cdef int64_t block_len = read_long(stream, None, None)
+    data = stream.read(block_len)
     buffer.truncate(0)
     buffer.write(data)
     buffer.seek(0)
 
 
-cdef deflate_read_block(Stream fo, ByteBuffer buffer):
+cdef deflate_read_block(Stream stream, ByteBuffer buffer):
     """Read a block of data with the 'deflate' codec."""
-    cdef int64_t block_len = read_long(fo, None, None)
-    data = fo.read(block_len)
+    cdef int64_t block_len = read_long(stream, None, None)
+    data = stream.read(block_len)
     # -15 is the log of the window size; negative indicates "raw"
     # (no zlib headers) decompression.  See zlib.h.
     decompressed = decompress(data, -15)
@@ -665,10 +665,10 @@ cdef deflate_read_block(Stream fo, ByteBuffer buffer):
     buffer.seek(0)
 
 
-cdef snappy_read_block(Stream fo, ByteBuffer buffer):
+cdef snappy_read_block(Stream stream, ByteBuffer buffer):
     """Read a block of data with the 'snappy' codec."""
-    cdef int64_t block_len = read_long(fo, None, None)
-    data = fo.read(block_len)
+    cdef int64_t block_len = read_long(stream, None, None)
+    data = stream.read(block_len)
     # Trim off last 4 bytes which hold the CRC32
     decompressed = snappy.decompress(data[:block_len - 4])
     buffer.truncate(0)
@@ -676,9 +676,9 @@ cdef snappy_read_block(Stream fo, ByteBuffer buffer):
     buffer.seek(0)
 
 
-cdef skip_sync(Stream fo, sync_marker):
+cdef skip_sync(Stream stream, sync_marker):
     """Skip an expected sync marker. Raise a ValueError if it doesn't match."""
-    if fo.read(SYNC_SIZE) != sync_marker:
+    if stream.read(SYNC_SIZE) != sync_marker:
         raise ValueError('Expected sync marker not found')
 
 
@@ -703,8 +703,10 @@ def acquaint_schema(schema, repo=None, reader_schema_defs=None):
     extract_named_schemas_into_repo(
         schema,
         repo,
-        lambda schema: lambda fo, _, r_schema: read_data(
-            fo, schema, reader_schema_defs.get(r_schema)
+        lambda schema: (
+            lambda stream, _, r_schema: (
+                read_data(stream, schema, reader_schema_defs.get(r_schema))
+            )
         ),
     )
 
@@ -729,7 +731,7 @@ cdef class Reader(object):
     """Creates an Avro reader as an iterator over the records in an Avro file.
     """
 
-    cdef StreamWrapper fo
+    cdef StreamWrapper stream
     cdef readonly object schema
     cdef readonly object writer_schema
     cdef readonly object reader_schema
@@ -767,7 +769,7 @@ cdef class Reader(object):
         >>>     for record in reader:
         >>>         process_record(record)
         """
-        self.fo = StreamWrapper(stream)
+        self.stream = StreamWrapper(stream)
         self.reader_schema = reader_schema
 
         self._read_header()
@@ -796,7 +798,7 @@ cdef class Reader(object):
     cdef _read_header(self):
         """Read the Avro Header information"""
         try:
-            self._header = read_data(self.fo, HEADER_SCHEMA, None)
+            self._header = read_data(self.stream, HEADER_SCHEMA, None)
         except Exception as exc:
             raise ReadError('Failed to read Avro header', exc)
 
@@ -829,7 +831,7 @@ cdef class Reader(object):
 
         # Alias these values so the code won't need to keep performing
         # attribute lookups on `self` (small optimization)
-        cdef StreamWrapper fo = self.fo
+        cdef StreamWrapper stream = self.stream
         cdef bytes sync_marker = self._sync_marker
         writer_schema = self.writer_schema
         reader_schema = self.reader_schema
@@ -847,16 +849,16 @@ cdef class Reader(object):
 
         try:
             while True:
-                block_count = read_long(fo, None, None)
-                read_block(fo, block_buf)
+                block_count = read_long(stream, None, None)
+                read_block(stream, block_buf)
 
                 for i in xrange(block_count):
                     yield read_data(block_buf, writer_schema, reader_schema)
 
-                skip_sync(fo, sync_marker)
+                skip_sync(stream, sync_marker)
 
                 # Check for EOF by peeking at the next byte
-                if not fo.peek(1):
+                if not stream.peek(1):
                     break
         except EOFError:
             pass
@@ -879,5 +881,5 @@ cpdef schemaless_reader(stream, schema):
         Avro "reader's schema"
     """
     acquaint_schema(schema)
-    cdef StreamWrapper fo = StreamWrapper(stream)
-    return read_data(fo, schema, None)
+    cdef StreamWrapper stream_ = StreamWrapper(stream)
+    return read_data(stream_, schema, None)

@@ -53,12 +53,12 @@ cdef Endianness float_format = get_float_format()
 
 # ---- Writing Avro primitives -----------------------------------------------#
 
-cdef inline int write_null(Stream fo, datum, schema) except -1:
+cdef inline int write_null(Stream stream, datum, schema) except -1:
     """A `null` value is not written at all."""
     pass
 
 
-cdef inline int write_boolean(Stream fo, datum, schema) except -1:
+cdef inline int write_boolean(Stream stream, datum, schema) except -1:
     """A `boolean` value is written as a single byte: b'0x00' for False,
     b'0x01' for True.
 
@@ -66,10 +66,10 @@ cdef inline int write_boolean(Stream fo, datum, schema) except -1:
     """  # noqa
     cdef uchar buf[1]
     buf[0] = 1 if datum else 0
-    fo.write_chars(buf, 1)
+    stream.write_chars(buf, 1)
 
 
-cdef inline int write_int(Stream fo, int32_t datum, schema) except -1:
+cdef inline int write_int(Stream stream, int32_t datum, schema) except -1:
     """An `int` value is written as 32-bit integer, using a variable-length
     zig-zag encoding. This is the same encoding used in Google protobufs.
 
@@ -88,10 +88,10 @@ cdef inline int write_int(Stream fo, int32_t datum, schema) except -1:
         ct += 1
         d >>= 7
     buf[ct] = <uchar>d
-    fo.write_chars(buf, ct+1)
+    stream.write_chars(buf, ct+1)
 
 
-cdef inline int write_long(Stream fo, int64_t datum, schema) except -1:
+cdef inline int write_long(Stream stream, int64_t datum, schema) except -1:
     """A `long` value is written as 64-bit integer, using a variable-length
     zig-zag encoding. This is the same encoding used in Google protobufs.
 
@@ -110,10 +110,10 @@ cdef inline int write_long(Stream fo, int64_t datum, schema) except -1:
         ct += 1
         d >>= 7
     buf[ct] = <uchar>d
-    fo.write_chars(buf, ct+1)
+    stream.write_chars(buf, ct+1)
 
 
-cdef inline int write_float(Stream fo, float datum, schema) except -1:
+cdef inline int write_float(Stream stream, float datum, schema) except -1:
     """A `float` value is written as a single precision 32-bit IEEE 754
     floating-point value in little-endian format.
 
@@ -126,17 +126,17 @@ cdef inline int write_float(Stream fo, float datum, schema) except -1:
     cdef uchar buf[4]
     cdef int i = 0
     if float_format == little:
-        fo.write_chars(d_cp, 4)
+        stream.write_chars(d_cp, 4)
     elif float_format == big:
         for i in range(4):
             buf[i] = d_cp[3-i]
-        fo.write_chars(buf, 4)
+        stream.write_chars(buf, 4)
     else:
         # For an unknown float format, fall back to using struct.pack
-        fo.write(pack('<f', datum))
+        stream.write(pack('<f', datum))
 
 
-cdef inline int write_double(Stream fo, double datum, schema) except -1:
+cdef inline int write_double(Stream stream, double datum, schema) except -1:
     """A `double` value is written as a double precision 64-bit IEEE 754
     floating-point value in little-endian format.
 
@@ -149,28 +149,28 @@ cdef inline int write_double(Stream fo, double datum, schema) except -1:
     cdef uchar buf[8]
     cdef int i = 0
     if double_format == little:
-        fo.write_chars(d_cp, 8)
+        stream.write_chars(d_cp, 8)
     elif double_format == big:
         for i in range(8):
             buf[i] = d_cp[7-i]
-        fo.write_chars(buf, 8)
+        stream.write_chars(buf, 8)
     else:
         # For an unknown double format, fall back to using struct.pack
-        fo.write(pack('<d', datum))
+        stream.write(pack('<d', datum))
 
 
-cdef inline int write_bytes(Stream fo, bytes datum, schema) except -1:
+cdef inline int write_bytes(Stream stream, bytes datum, schema) except -1:
     """A `bytes` value is written as a `long` (length of the byte string),
     immediately followed by the raw byte data.
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
     cdef int64_t datum_len = len(datum)
-    write_long(fo, datum_len, None)
-    fo.write(datum)
+    write_long(stream, datum_len, None)
+    stream.write(datum)
 
 
-cdef inline int write_string(Stream fo, unicode datum, schema) except -1:
+cdef inline int write_string(Stream stream, unicode datum, schema) except -1:
     """A `string` value is written as a `long` (length of the UTF-8 encoded
     string), immediately followed by the UTF-8 encoded byte data.
 
@@ -180,13 +180,13 @@ cdef inline int write_string(Stream fo, unicode datum, schema) except -1:
     """  # noqa
     cdef bytes byte_str = datum.encode('utf-8')
     cdef int64_t datum_len = len(byte_str)
-    write_long(fo, datum_len, None)
-    fo.write(byte_str)
+    write_long(stream, datum_len, None)
+    stream.write(byte_str)
 
 
 # ---- Writing Avro complex types --------------------------------------------#
 
-cdef inline int write_fixed(Stream fo, bytes datum, schema) except -1:
+cdef inline int write_fixed(Stream stream, bytes datum, schema) except -1:
     """A `fixed` value is written as raw bytes. The length of the byte data
     is declared in the schema.
 
@@ -196,10 +196,10 @@ cdef inline int write_fixed(Stream fo, bytes datum, schema) except -1:
 
     Reference: https://avro.apache.org/docs/current/spec.html#Fixed
     """
-    fo.write(datum)
+    stream.write(datum)
 
 
-cdef inline int write_enum(Stream fo, datum, dict schema) except -1:
+cdef inline int write_enum(Stream stream, datum, dict schema) except -1:
     """An `enum` value is written as an `int` representing the zero-based
     position of the symbol in the schema.
 
@@ -209,10 +209,10 @@ cdef inline int write_enum(Stream fo, datum, dict schema) except -1:
     Reference: https://avro.apache.org/docs/current/spec.html#Enums
     """
     cdef int32_t index = schema['symbols'].index(datum)
-    write_int(fo, index, None)
+    write_int(stream, index, None)
 
 
-cdef inline int write_array(Stream fo, list datum, dict schema) except -1:
+cdef inline int write_array(Stream stream, list datum, dict schema) except -1:
     """An `array` value is written as a series of blocks.
 
     Each block consists of a `long` `count` value, followed by that many array
@@ -229,14 +229,14 @@ cdef inline int write_array(Stream fo, list datum, dict schema) except -1:
     """
     cdef int64_t datum_len = len(datum)
     if datum_len:
-        write_long(fo, datum_len, None)
+        write_long(stream, datum_len, None)
         dtype = schema['items']
         for item in datum:
-            write_data(fo, item, dtype)
-    write_long(fo, 0, None)
+            write_data(stream, item, dtype)
+    write_long(stream, 0, None)
 
 
-cdef inline int write_map(Stream fo, dict datum, dict schema) except -1:
+cdef inline int write_map(Stream stream, dict datum, dict schema) except -1:
     """A `map` value is written as a series of blocks.
 
     Each block consists of a `long` `count` value, followed by that many
@@ -256,18 +256,18 @@ cdef inline int write_map(Stream fo, dict datum, dict schema) except -1:
     """
     cdef int64_t datum_len = len(datum)
     if datum_len:
-        write_long(fo, datum_len, None)
+        write_long(stream, datum_len, None)
         vtype = schema['values']
         for key, val in iteritems(datum):
             if isinstance(key, unicode):
-                write_string(fo, key, None)
+                write_string(stream, key, None)
             else:
-                write_bytes(fo, key, None)
-            write_data(fo, val, vtype)
-    write_long(fo, 0, None)
+                write_bytes(stream, key, None)
+            write_data(stream, val, vtype)
+    write_long(stream, 0, None)
 
 
-cdef inline int write_union(Stream fo, datum, list schema) except -1:
+cdef inline int write_union(Stream stream, datum, list schema) except -1:
     """A `union` value is written as a `long` indicating the zero-based
     position of the `value` in the union's schema, immediately followed by
     the `value`, written per the indicated schema within the union.
@@ -284,11 +284,11 @@ cdef inline int write_union(Stream fo, datum, list schema) except -1:
             '%r (type %s) does not match the schema: %s'
             % (datum, type(datum), schema)
         )
-    write_long(fo, index, None)
-    write_data(fo, datum, schema[index])
+    write_long(stream, index, None)
+    write_data(stream, datum, schema[index])
 
 
-cdef inline int write_record(Stream fo, dict datum, dict schema) except -1:
+cdef inline int write_record(Stream stream, dict datum, dict schema) except -1:
     """A `record` value is written by encoding the values of its fields in the
     order in which they are declared. In other words, a `record` is written
     as just the concatenation of the encodings of its fields. Field values
@@ -299,7 +299,7 @@ cdef inline int write_record(Stream fo, dict datum, dict schema) except -1:
     cdef dict field
     for field in schema['fields']:
         value = datum.get(field['name'], field.get('default'))
-        write_data(fo, value, field['type'])
+        write_data(stream, value, field['type'])
 
 
 # ---- Validation of data with Schema ----------------------------------------#
@@ -438,8 +438,8 @@ cdef dict WRITERS = {
 
 
 cpdef py_write_data(stream, datum, schema):
-    """Write a `datum` of data to the output stream `stream` using the
-    specified Avro `schema`.
+    """Write a `datum` of data to the output `stream` using the specified
+    Avro `schema`.
 
     Paramaters
     ----------
@@ -451,13 +451,13 @@ cpdef py_write_data(stream, datum, schema):
         Avro Schema for `datum`
     """
     # This function is callable from Python
-    cdef StreamWrapper stream_obj = StreamWrapper(stream)
-    write_data(stream_obj, datum, schema)
+    cdef StreamWrapper stream_ = StreamWrapper(stream)
+    write_data(stream_, datum, schema)
 
 
-cdef int write_data(Stream fo, datum, schema) except -1:
-    """Write a `datum` of data to the output stream `fo`, using the Avro
-    Schema `schema`.
+cdef int write_data(Stream stream, datum, schema) except -1:
+    """Write a `datum` of data to the output `stream` using the specified
+    Avro `schema`.
     See full documentation in `py_write_data`
     """
     if isinstance(schema, dict):
@@ -470,49 +470,49 @@ cdef int write_data(Stream fo, datum, schema) except -1:
     cdef Py_hash_t h_type = hash(record_type)
 
     if h_type == h_long:
-        return write_long(fo, datum, None)
+        return write_long(stream, datum, None)
 
     elif h_type in (h_record, h_error):
-        return write_record(fo, datum, schema)
+        return write_record(stream, datum, schema)
 
     elif h_type == h_string:
         # If the object is already unicode, then call `write_string`
         # If the object is a byte-string, then let's *assume* the user has
         # already encoded to UTF-8 and call `write_bytes`
         if isinstance(datum, unicode):
-            return write_string(fo, datum, None)
+            return write_string(stream, datum, None)
         else:
-            return write_bytes(fo, datum, None)
+            return write_bytes(stream, datum, None)
 
     elif h_type == h_int:
-        return write_int(fo, datum, None)
+        return write_int(stream, datum, None)
 
     elif h_type == h_double:
-        return write_double(fo, datum, None)
+        return write_double(stream, datum, None)
 
     elif h_type == h_float:
-        return write_float(fo, datum, None)
+        return write_float(stream, datum, None)
 
     elif h_type == h_bytes:
-        return write_bytes(fo, datum, None)
+        return write_bytes(stream, datum, None)
 
     elif h_type == h_boolean:
-        return write_boolean(fo, datum, None)
+        return write_boolean(stream, datum, None)
 
     elif h_type == h_fixed:
-        return write_fixed(fo, datum, None)
+        return write_fixed(stream, datum, None)
 
     elif h_type in (h_union, h_error_union):
-        return write_union(fo, datum, schema)
+        return write_union(stream, datum, schema)
 
     elif h_type == h_map:
-        return write_map(fo, datum, schema)
+        return write_map(stream, datum, schema)
 
     elif h_type == h_array:
-        return write_array(fo, datum, schema)
+        return write_array(stream, datum, schema)
 
     elif h_type == h_enum:
-        return write_enum(fo, datum, schema)
+        return write_enum(stream, datum, schema)
 
     elif h_type == h_null:
         # `write_null` does nothing; just return
@@ -521,38 +521,38 @@ cdef int write_data(Stream fo, datum, schema) except -1:
     else:
         # User defined types will have to use the dict lookup to call their
         # corresponding `write_data` function
-        WRITERS[record_type](fo, datum, schema)
+        WRITERS[record_type](stream, datum, schema)
 
 
 # ---- Block Encoders --------------------------------------------------------#
 
-cdef inline int null_write_block(Stream fo, bytes block_bytes) except -1:
+cdef inline int null_write_block(Stream stream, bytes block_bytes) except -1:
     """Write a block of bytes with no codec ('null' codec)."""
     cdef int64_t block_len = len(block_bytes)
-    write_long(fo, block_len, None)
-    fo.write(block_bytes)
+    write_long(stream, block_len, None)
+    stream.write(block_bytes)
 
 
-cdef inline int deflate_write_block(Stream fo, bytes block_bytes) except -1:
+cdef inline int deflate_write_block(Stream stream, bytes block_bytes) except -1:
     """Write a block of bytes with the 'deflate' codec."""
     cdef bytes data = compress(block_bytes)
     cdef int64_t data_len = len(data)
     # The first two and last characters are zlib wrappers around deflate data
     data = data[2:data_len-1]
-    write_long(fo, data_len - 3, None)
-    fo.write(data)
+    write_long(stream, data_len - 3, None)
+    stream.write(data)
 
 
-cdef inline int snappy_write_block(Stream fo, bytes block_bytes) except -1:
+cdef inline int snappy_write_block(Stream stream, bytes block_bytes) except -1:
     """Write a block of bytes wih the 'snappy' codec."""
     cdef bytes data = snappy.compress(block_bytes)
     # Add 4 bytes for the CRC32
     cdef int64_t block_len = len(data) + 4
-    write_long(fo, block_len, None)
-    fo.write(data)
+    write_long(stream, block_len, None)
+    stream.write(data)
     # Write the 4-byte, big-endian CRC32 checksum
     cdef uint32_t crc = crc32(block_bytes) & 0xFFFFFFFF
-    fo.write(pack('>I', crc))
+    stream.write(pack('>I', crc))
 
 
 # ---- Schema Handling -------------------------------------------------------#
@@ -573,7 +573,9 @@ def acquaint_schema(schema, repo=None):
     extract_named_schemas_into_repo(
         schema,
         repo,
-        lambda schema: lambda fo, datum, _: write_data(fo, datum, schema),
+        lambda schema: (
+            lambda stream, datum, _: write_data(stream, datum, schema)
+        ),
     )
     extract_named_schemas_into_repo(
         schema,
@@ -582,7 +584,7 @@ def acquaint_schema(schema, repo=None):
     )
 
 
-cdef int write_header(Stream fo, dict metadata, bytes sync_marker) except -1:
+cdef int write_header(Stream stream, dict metadata, bytes sync_marker) except -1:
     """Write the Avro header"""
     # Note: values in the `meta` dict are written as bytes.
     # See the definition of HEADER_SCHEMA in _schema.pyx
@@ -594,17 +596,21 @@ cdef int write_header(Stream fo, dict metadata, bytes sync_marker) except -1:
         ),
         'sync': sync_marker,
     }
-    write_data(fo, header, HEADER_SCHEMA)
+    write_data(stream, header, HEADER_SCHEMA)
 
 
 # ---- Public API - Writing Avro Files ---------------------------------------#
 
 cpdef py_writer(
-    stream, schema, records, codec='null', sync_interval=SYNC_INTERVAL,
+    stream,
+    schema,
+    records,
+    codec='null',
+    sync_interval=SYNC_INTERVAL,
     metadata=None
 ):
-    """Write multiple `records` to the output stream `stream` using the
-    specified Avro `schema`.
+    """Write multiple `records` to the output `stream` using the specified
+    Avro `schema`.
 
     Paramaters
     ----------
@@ -653,20 +659,20 @@ cpdef py_writer(
 
 
 cdef writer(
-    stream, schema, records, codec, _sync_interval, metadata
+    stream_, schema, records, codec, sync_interval_, metadata
 ):
-    """Writes multiple `records` to the output stream `stream` using the
-    specified Avro Schema `schema`.
+    """Write multiple `records` to the output `stream` using the specified
+    Avro `schema`.
     See full documentation in `py_writer`
     """
     cdef int64_t block_count = 0
     cdef SSize_t sync_interval
     cdef bytes sync_marker
-    cdef StreamWrapper stream_obj = StreamWrapper(stream)
+    cdef StreamWrapper stream = StreamWrapper(stream_)
 
     # Default values
     codec = codec or 'null'
-    sync_interval = _sync_interval or SYNC_INTERVAL
+    sync_interval = sync_interval_ or SYNC_INTERVAL
     metadata = metadata or {}
 
     # Get block writer specified by `codec`
@@ -687,7 +693,7 @@ cdef writer(
     sync_marker = urandom(SYNC_SIZE)
     metadata['avro.codec'] = codec
     metadata['avro.schema'] = json.dumps(schema)
-    write_header(stream_obj, metadata, sync_marker)
+    write_header(stream, metadata, sync_marker)
 
     # Register the schema
     acquaint_schema(schema)
@@ -700,24 +706,24 @@ cdef writer(
         write_data(buf, record, schema)
         block_count += 1
         if buf.pos >= sync_interval:
-            write_long(stream_obj, block_count, None)
-            block_writer(stream_obj, buf.getvalue())
-            stream_obj.write(sync_marker)
+            write_long(stream, block_count, None)
+            block_writer(stream, buf.getvalue())
+            stream.write(sync_marker)
             buf.pos = 0
             block_count = 0
 
     if buf.pos or block_count > 0:
-        write_long(stream_obj, block_count, None)
-        block_writer(stream_obj, buf.getvalue())
-        stream_obj.write(sync_marker)
+        write_long(stream, block_count, None)
+        block_writer(stream, buf.getvalue())
+        stream.write(sync_marker)
 
     stream.flush()
     buf.close()
 
 
 cpdef schemaless_writer(stream, schema, record):
-    """Write a single `record` to the output stream `stream` without
-    writing the Avro schema and header information.
+    """Write a single `record` to the output `stream` without writing the Avro
+    schema and header information.
 
     Paramaters
     ----------
@@ -730,5 +736,5 @@ cpdef schemaless_writer(stream, schema, record):
         Record to write
     """
     acquaint_schema(schema)
-    cdef StreamWrapper stream_obj = StreamWrapper(stream)
-    write_data(stream_obj, record, schema)
+    cdef StreamWrapper stream_ = StreamWrapper(stream)
+    write_data(stream_, record, schema)
