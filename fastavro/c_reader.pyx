@@ -627,7 +627,8 @@ cdef read_data(Stream stream, writer_schema, reader_schema):
             return None
 
         else:
-            print("Type not found for: %s" % record_type)
+            # User defined types will have to use the dict lookup to call their
+            # corresponding `read_data` function
             return READERS[record_type](stream, writer_schema, reader_schema)
 
     except SchemaResolutionError:
