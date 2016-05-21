@@ -1,10 +1,8 @@
-include README.md NOTICE.txt ChangeLog *.sh
-include Makefile
-include t
-include tox.ini
+include README.md NOTICE.txt LICENSE.txt ChangeLog
+include Makefile *.mk
+include run-tests.sh
 
-recursive-include docs *.py
-recursive-include docs *.rst
-recursive-include docs Makefile
-recursive-include tests *.avro
-recursive-include tests *.py
+recursive-include fastavro *.py *.pyx *.pxd *.pxi *.c
+recursive-include tests *.py *.pyx *.c
+recursive-include tests/avro-files *.avro
+recursive-include docs *.py *.rst Makefile
