@@ -54,7 +54,9 @@ Example usage:
 from __future__ import absolute_import
 
 
-__version__ = '0.10.0'
+__version_info__ = (0, 10, 0)
+
+__version__ = '.'.join(map(str, __version_info__))
 
 
 try:
@@ -115,5 +117,6 @@ SYNC_INTERVAL = _schema.SYNC_INTERVAL
 
 
 __all__ = [
-    n for n in locals().keys() if not n.startswith('_')
-] + ['__version__']
+    _n for _n in locals().keys() if not _n.startswith('_')
+] + ['__version__', '__version_info__']
+del _n
