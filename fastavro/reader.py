@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# cython: auto_cpdef=True
 """Python code for reading AVRO files"""
 
 
@@ -27,18 +26,11 @@ try:
 except ImportError:
     snappy = None
 
-try:
-    from fastavro._compat import BytesIO, xrange, iteritems, byte2int
-    from fastavro._schema import (
-        extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
-        PRIMITIVE_TYPES, AVRO_TYPES,
-    )
-except ImportError:
-    from fastavro.compat import BytesIO, xrange, iteritems, byte2int
-    from fastavro.schema import (
-        extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
-        PRIMITIVE_TYPES, AVRO_TYPES,
-    )
+from fastavro.compat import BytesIO, xrange, iteritems, byte2int
+from fastavro.schema import (
+    extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
+    PRIMITIVE_TYPES, AVRO_TYPES,
+)
 
 
 # ---- Exceptions ------------------------------------------------------------#

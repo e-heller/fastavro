@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# cython: auto_cpdef=True
 """Utilities for interacting with Avro schemas"""
 
 

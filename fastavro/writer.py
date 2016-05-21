@@ -1,5 +1,4 @@
 # -*- coding: utf-8 -*-
-# cython: auto_cpdef=True
 """Python code for writing AVRO files"""
 
 
@@ -29,24 +28,14 @@ try:
 except ImportError:
     snappy = None
 
-try:
-    from fastavro._compat import (
-        BytesIO, iteritems, _int_types, _number_types, _unicode_type,
-        _bytes_type, _string_types,
-    )
-    from fastavro._schema import (
-        extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
-        SYNC_INTERVAL, PRIMITIVE_TYPES,
-    )
-except ImportError:
-    from fastavro.compat import (
-        BytesIO, iteritems, _int_types, _number_types, _unicode_type,
-        _bytes_type, _string_types,
-    )
-    from fastavro.schema import (
-        extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
-        SYNC_INTERVAL, PRIMITIVE_TYPES,
-    )
+from fastavro.compat import (
+    BytesIO, iteritems, _int_types, _number_types, _unicode_type,
+    _bytes_type, _string_types,
+)
+from fastavro.schema import (
+    extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
+    SYNC_INTERVAL, PRIMITIVE_TYPES,
+)
 
 
 INT_MIN_VALUE = -(1 << 31)
