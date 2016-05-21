@@ -54,17 +54,30 @@ Example usage:
 from __future__ import absolute_import
 
 
-__version__ = '0.9.10'
+__version__ = '0.10.0'
 
 
 try:
-    from . import _reader
-    from . import _writer
-    from . import _schema
+    from . import c_reader as _reader
+    from . import c_writer as _writer
+    from . import c_schema as _schema
+
+    Reader = _reader.PyReader
+    load = _reader.py_read_data
+
+    writer = _writer.py_writer
+    dump = _writer.py_write_data
+
 except ImportError:
     from . import reader as _reader
     from . import writer as _writer
     from . import schema as _schema
+
+    Reader = _reader.Reader
+    load = _reader.read_data
+
+    writer = _writer.writer
+    dump = _writer.write_data
 
 
 def _acquaint_schema(schema):
@@ -81,15 +94,12 @@ def _acquaint_schema(schema):
 
 acquaint_schema = _schema.acquaint_schema = _acquaint_schema
 
-# Reader API
-Reader = reader = iter_avro = _reader.Reader
-schemaless_reader = _reader.schemaless_reader
-load = _reader.read_data
 
-# Writer API
-write = writer = _writer.writer
+reader = iter_avro = Reader
+schemaless_reader = _reader.schemaless_reader
+
+write = writer
 schemaless_writer = _writer.schemaless_writer
-dump = _writer.write_data
 
 # Exceptions
 UnknownType = _schema.UnknownType
