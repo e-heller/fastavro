@@ -1,54 +1,102 @@
-# Makefile for fastavro project
-#
-# Since we distribute the generated C file for simplicity (and so that end users
-# won't need to install cython). You can re-create the C file using this
-# Makefile.
+# Makefile for fastavro
 
+PYTHON ?= python
 
-ifndef PYTHON
-    PYTHON=python
-endif
+# Try to find the correct Python Include directory
+include py_include.mk
+
+# Try to find the correct compiled extension suffix (e.g., '.so')
+include py_ext_suffix.mk
 
 
 #------ Project Files
 
-py_files = fastavro/reader.py fastavro/writer.py \
-			fastavro/compat.py fastavro/schema.py
+pyx_files = $(wildcard fastavro/*.pyx) \
+			$(wildcard tests/*.pyx)
 
-c_files  = $(subst /,/_,$(py_files:.py=.c))
+c_files  = $(pyx_files:.pyx=.c)
+o_files  = $(pyx_files:.pyx=.o)
+so_files = $(pyx_files:.pyx=$(PY_SO_SUFFIX))
 
 
 #------ Cython Arguments
+
+CYTHON    ?= cython
+CYTHONIZE ?= cythonize
 
 cython_args    :=
 cython_profile := profile=True
 
 
+#------ GCC compile / link settings
+
+CC ?= gcc
+
+cc_args = -pthread -fPIC -DNDEBUG
+
+cc_debug = -g0
+
+cc_warnings = -Wall -Wformat -Werror=format-security -Wstrict-prototypes \
+	-Wno-unused-function -Wsign-compare -Wunreachable-code
+
+cc_opts = -fwrapv -fno-strict-aliasing
+
+cc_include = $(PY_INCLUDE)
+
+cc_optimize = -O3 -fomit-frame-pointer
+
+ld_args  = -pthread -shared -DNDEBUG -Wl,-O1
+
+ld_debug = $(cc_debug)
+
+ld_link = -lm
+
+
 #------ Build Rules
 
-_%.c: %.py
-	cp $< $(<D)/_$(<F)
-	cython $(cython_args) $(<D)/_$(<F)
-	rm $(<D)/_$(<F)
+%.c: %.pyx
+	$(CYTHON) $(cython_args) $<
+
+%.o: %.c
+	$(CC) $(cc_args) $(cc_debug) $(cc_warnings) $(cc_opts) $(cc_optimize) $(cc_include) -c $< -o $@
+
+%$(PY_SO_SUFFIX): %.o
+	$(CC) $(ld_args) $(ld_debug) $(ld_link) $< -o $@
+
+# Build directly with `cythonize`
+%$(PY_SO_SUFFIX): %.pyx
+	$(CYTHONIZE) -i $<
 
 
-all: build
+#------ Build Targets
 
-# `cfiles` just calls Cython to generate the C files.
+all: compile
+
+
+# `cfiles` just calls `cython` to generate '*.pyx' => '*.c'
 cfiles: $(c_files)
 
 
-# `build` calls Cython to generate the C files, then compiles the modules
-# with distutils by calling `setup.py build_ext`
+# `build` calls `cython` to generate '*.pyx' => '*.c', then compiles the
+# modules with distutils (setup.py)
 build: $(c_files)
-	python setup.py build_ext -i
+	$(PYTHON) setup.py build_ext -i
 	rm -rfv build dist *.egg-info
 
 
-# `prof` calls cython with `-X profile=True` when generating the C files,
-# which allows profiling the modules with python's cProfile module.
+# `compile` calls `cython` to generate '*.pyx' => '*.c', then compiles
+# the modules with GCC.
+compile: $(c_files) $(o_files) $(so_files)
+
+
+# `cythonize` calls `cythonize` to build '*.pyx' => '*.so'
+cythonize: $(so_files)
+
+
+# `prof` calls `cython` with "-X profile=True", which allows profiling the
+# extension modules with Python's cProfile module.
 prof: cython_args := -X $(strip $(filter -X,$(cython_args)))$(cython_profile)
-prof: build
+prof: compile
 
 
 clean:
@@ -63,11 +111,16 @@ clean:
 
 fresh: clean all
 
+# Call `check-manifest` to verify the project manifest
+# This requires the `check-manifest` package:
+#   https://pypi.python.org/pypi/check-manifest
+check:
+	check-manifest --ignore *.c,*.o,*.so
+
 publish:
 	./publish.sh
 
 test:
 	PATH="${PATH}:${HOME}/.local/bin" tox
 
-
-.PHONY: all cfiles build prof clean fresh publish test
+.PHONY: all cfiles build compile cythonize prof clean fresh check publish test
