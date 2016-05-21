@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Python code for reading AVRO files"""
+"""Python implementation for reading Apache Avro files"""
 
 
 # This code is based on the Apache 'avro' pacakge, found at:
@@ -141,12 +141,12 @@ def match_schemas(w_schema, r_schema):
 
 # ---- Reading Avro primitives -----------------------------------------------#
 
-def read_null(fo, writer_schema=None, reader_schema=None):
+def read_null(stream, writer_schema=None, reader_schema=None):
     """A `null` value is not written at all."""
     return None
 
 
-def read_boolean(fo, writer_schema=None, reader_schema=None):
+def read_boolean(stream, writer_schema=None, reader_schema=None):
     """A `boolean` value is written as a single byte: b'0x00' for False,
     b'0x01' for True.
 
@@ -154,13 +154,13 @@ def read_boolean(fo, writer_schema=None, reader_schema=None):
     """  # noqa
     # Although technically 0x01 == True and 0x00 == False, many languages will
     # cast anything other than 0 to True and only 0 to False
-    c = fo.read(1)
+    c = stream.read(1)
     if not c:
         raise EOFError("EOF in read_boolean")
     return c != b'\x00'
 
 
-def read_long(fo, writer_schema=None, reader_schema=None):
+def read_long(stream, writer_schema=None, reader_schema=None):
     """`int` and `long` values are written as 32-bit and 64-bit integers,
     respectively, using a variable-length zig-zag encoding. This is the same
     encoding used in Google protobufs.
@@ -170,14 +170,14 @@ def read_long(fo, writer_schema=None, reader_schema=None):
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    c = fo.read(1)
+    c = stream.read(1)
     if not c:
         raise EOFError("EOF in read_long")
     b = ord(c)
     n = b & 0x7F
     shift = 7
     while (b & 0x80) != 0:
-        b = ord(fo.read(1))
+        b = ord(stream.read(1))
         n |= (b & 0x7F) << shift
         shift += 7
     return (n >> 1) ^ -(n & 1)
@@ -187,39 +187,39 @@ def read_long(fo, writer_schema=None, reader_schema=None):
 read_int = read_long
 
 
-def read_float(fo, writer_schema=None, reader_schema=None):
+def read_float(stream, writer_schema=None, reader_schema=None):
     """A `float` value is written as a single precision 32-bit IEEE 754
     floating-point value in little-endian format.
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    return unpack('<f', fo.read(4))[0]
+    return unpack('<f', stream.read(4))[0]
 
 
-def read_double(fo, writer_schema=None, reader_schema=None):
+def read_double(stream, writer_schema=None, reader_schema=None):
     """A `double` value is written as a double precision 64-bit IEEE 754
     floating-point value in little-endian format.
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    return unpack('<d', fo.read(8))[0]
+    return unpack('<d', stream.read(8))[0]
 
 
-def read_bytes(fo, writer_schema=None, reader_schema=None):
+def read_bytes(stream, writer_schema=None, reader_schema=None):
     """A `bytes` value is written as a `long` (length of the byte string),
     immediately followed by the raw byte data.
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    size = read_long(fo)
+    size = read_long(stream)
     if reader_schema == 'string':
         # Schema Resolution: promote to unicode string
-        return fo.read(size).decode('utf-8')
+        return stream.read(size).decode('utf-8')
     else:
-        return fo.read(size)
+        return stream.read(size)
 
 
-def read_string(fo, writer_schema=None, reader_schema=None):
+def read_string(stream, writer_schema=None, reader_schema=None):
     """A `string` value is written as a `long` (length of the UTF-8 encoded
     string), immediately followed by the UTF-8 encoded byte data.
 
@@ -227,32 +227,32 @@ def read_string(fo, writer_schema=None, reader_schema=None):
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    size = read_long(fo)
+    size = read_long(stream)
     if reader_schema == 'bytes':
         # Schema Resolution: promote to byte string
-        return fo.read(size)
+        return stream.read(size)
     else:
-        return fo.read(size).decode('utf-8')
+        return stream.read(size).decode('utf-8')
 
 
 # ---- Reading Avro complex types --------------------------------------------#
 
-def read_fixed(fo, writer_schema, reader_schema=None):
+def read_fixed(stream, writer_schema, reader_schema=None):
     """A `fixed` value is written as raw bytes. The length of the byte data
     is declared in the schema.
 
     Reference: https://avro.apache.org/docs/current/spec.html#Fixed
     """
-    return fo.read(writer_schema['size'])
+    return stream.read(writer_schema['size'])
 
 
-def read_enum(fo, writer_schema, reader_schema=None):
+def read_enum(stream, writer_schema, reader_schema=None):
     """An `enum` value is written as an `int` representing the zero-based
     position of the symbol in the schema.
 
     Reference: https://avro.apache.org/docs/current/spec.html#Enums
     """
-    index = read_int(fo)
+    index = read_int(stream)
     symbol = writer_schema['symbols'][index]
     if reader_schema and symbol not in reader_schema['symbols']:
         # Schema Resolution: 'If the writer's symbol is not present in the
@@ -263,7 +263,7 @@ def read_enum(fo, writer_schema, reader_schema=None):
     return symbol
 
 
-def read_array(fo, writer_schema, reader_schema=None):
+def read_array(stream, writer_schema, reader_schema=None):
     """An `array` value is written as a series of blocks.
 
     Each block consists of a `long` `count` value, followed by that many array
@@ -280,20 +280,20 @@ def read_array(fo, writer_schema, reader_schema=None):
     r_item_schema = reader_schema['items'] if reader_schema else None
     array_items = []
 
-    block_count = read_long(fo)
+    block_count = read_long(stream)
     while block_count:
         if block_count < 0:
             block_count = -block_count
             # Read block size, unused
-            read_long(fo)
+            read_long(stream)
 
         for i in xrange(block_count):
-            array_items.append(read_data(fo, w_item_schema, r_item_schema))
-        block_count = read_long(fo)
+            array_items.append(read_data(stream, w_item_schema, r_item_schema))
+        block_count = read_long(stream)
     return array_items
 
 
-def read_map(fo, writer_schema, reader_schema=None):
+def read_map(stream, writer_schema, reader_schema=None):
     """A `map` value is written as a series of blocks.
 
     Each block consists of a `long` `count` value, followed by that many
@@ -313,28 +313,28 @@ def read_map(fo, writer_schema, reader_schema=None):
     r_value_schema = reader_schema['values'] if reader_schema else None
     map_items = {}
 
-    block_count = read_long(fo)
+    block_count = read_long(stream)
     while block_count:
         if block_count < 0:
             block_count = -block_count
             # Read block size, unused
-            read_long(fo)
+            read_long(stream)
 
         for i in xrange(block_count):
-            key = read_string(fo)
-            map_items[key] = read_data(fo, w_value_schema, r_value_schema)
-        block_count = read_long(fo)
+            key = read_string(stream)
+            map_items[key] = read_data(stream, w_value_schema, r_value_schema)
+        block_count = read_long(stream)
     return map_items
 
 
-def read_union(fo, writer_schema, reader_schema=None):
+def read_union(stream, writer_schema, reader_schema=None):
     """A `union` value is written as a `long` indicating the zero-based
     position of the `value` in the union's schema, immediately followed by
     the `value`, written per the indicated schema within the union.
 
     Reference: https://avro.apache.org/docs/current/spec.html#Unions
     """
-    index = read_long(fo)
+    index = read_long(stream)
     w_schema = writer_schema[index]
     if reader_schema:
         # Schema Resolution
@@ -342,16 +342,16 @@ def read_union(fo, writer_schema, reader_schema=None):
                      else (reader_schema,))
         for r_schema in r_schemas:
             if match_schemas(w_schema, r_schema):
-                return read_data(fo, w_schema, r_schema)
+                return read_data(stream, w_schema, r_schema)
         raise SchemaResolutionError(
             'Schema mismatch: %s cannot resolve to %s'
             % (writer_schema, reader_schema)
         )
     else:
-        return read_data(fo, w_schema)
+        return read_data(stream, w_schema)
 
 
-def read_record(fo, writer_schema, reader_schema=None):
+def read_record(stream, writer_schema, reader_schema=None):
     """A `record` value is written by encoding the values of its fields in the
     order in which they are declared. In other words, a `record` is written
     as just the concatenation of the encodings of its fields. Field values
@@ -377,7 +377,7 @@ def read_record(fo, writer_schema, reader_schema=None):
     record = {}
     if reader_schema is None:
         for field in writer_schema['fields']:
-            record[field['name']] = read_data(fo, field['type'])
+            record[field['name']] = read_data(stream, field['type'])
     else:
         readers_field_dict = dict(
             (f['name'], f) for f in reader_schema['fields']
@@ -386,11 +386,11 @@ def read_record(fo, writer_schema, reader_schema=None):
             readers_field = readers_field_dict.get(field['name'])
             if readers_field:
                 record[field['name']] = read_data(
-                    fo, field['type'], readers_field['type']
+                    stream, field['type'], readers_field['type']
                 )
             else:
                 # should implement skip
-                read_data(fo, field['type'], field['type'])
+                read_data(stream, field['type'], field['type'])
 
         # fill in default values
         if len(readers_field_dict) > len(record):
@@ -431,13 +431,13 @@ READERS = {
 }
 
 
-def read_data(fo, writer_schema, reader_schema=None):
-    """Read data from the input stream `fo`, according to the Schema
+def read_data(stream, writer_schema, reader_schema=None):
+    """Read data from the input `stream` according to the specified Avro
     `writer_schema`, optionally migrating to the `reader_schema` if provided.
 
     Paramaters
     ----------
-    fo: file-like object
+    stream: file-like object
         Input file or stream
     writer_schema: dict
         Avro "writer's schema"
@@ -459,7 +459,7 @@ def read_data(fo, writer_schema, reader_schema=None):
             )
 
     try:
-        return READERS[record_type](fo, writer_schema, reader_schema)
+        return READERS[record_type](stream, writer_schema, reader_schema)
     except SchemaResolutionError:
         raise
     except Exception as exc:
@@ -470,20 +470,20 @@ def read_data(fo, writer_schema, reader_schema=None):
 
 # ---- Block Decoders --------------------------------------------------------#
 
-def null_read_block(fo, buffer):
+def null_read_block(stream, buffer):
     """Read a block of data with no codec ('null' codec)."""
-    block_len = read_long(fo)
-    data = fo.read(block_len)
+    block_len = read_long(stream)
+    data = stream.read(block_len)
     buffer.truncate(0)
     buffer.seek(0)
     buffer.write(data)
     buffer.seek(0)
 
 
-def deflate_read_block(fo, buffer):
+def deflate_read_block(stream, buffer):
     """Read a block of data with the 'deflate' codec."""
-    block_len = read_long(fo)
-    data = fo.read(block_len)
+    block_len = read_long(stream)
+    data = stream.read(block_len)
     # -15 is the log of the window size; negative indicates "raw"
     # (no zlib headers) decompression.  See zlib.h.
     decompressed = decompress(data, -15)
@@ -493,10 +493,10 @@ def deflate_read_block(fo, buffer):
     buffer.seek(0)
 
 
-def snappy_read_block(fo, buffer):
+def snappy_read_block(stream, buffer):
     """Read a block of data with the 'snappy' codec."""
-    block_len = read_long(fo)
-    data = fo.read(block_len)
+    block_len = read_long(stream)
+    data = stream.read(block_len)
     # Trim off last 4 bytes which hold the CRC32
     decompressed = snappy.decompress(data[:-4])
     buffer.truncate(0)
@@ -505,9 +505,9 @@ def snappy_read_block(fo, buffer):
     buffer.seek(0)
 
 
-def skip_sync(fo, sync_marker):
+def skip_sync(stream, sync_marker):
     """Skip an expected sync marker. Raise a ValueError if it doesn't match."""
-    if fo.read(SYNC_SIZE) != sync_marker:
+    if stream.read(SYNC_SIZE) != sync_marker:
         raise ValueError('Expected sync marker not found')
 
 
@@ -530,8 +530,10 @@ def acquaint_schema(schema, repo=None, reader_schema_defs=None):
     extract_named_schemas_into_repo(
         schema,
         repo,
-        lambda schema: lambda fo, _, r_schema: read_data(
-            fo, schema, reader_schema_defs.get(r_schema)
+        lambda schema: (
+            lambda stream, _, r_schema: (
+                read_data(stream, schema, reader_schema_defs.get(r_schema))
+            )
         ),
     )
 
@@ -552,13 +554,13 @@ class Reader(object):
     """Creates an Avro reader as an iterator over the records in an Avro file.
     """
 
-    def __init__(self, fo, reader_schema=None):
+    def __init__(self, stream, reader_schema=None):
         """Creates an Avro reader as an iterator over the records in the Avro
-        file `fo`, optionally migrating to the `reader_schema` if provided.
+        file `stream`, optionally migrating to the `reader_schema` if provided.
 
         Paramaters
         ----------
-        fo: file-like object
+        stream: file-like object
             Input file or stream
         reader_schema: dict, optional
             Avro "reader's schema"
@@ -578,7 +580,7 @@ class Reader(object):
         >>>     for record in reader:
         >>>         process_record(record)
         """
-        self.fo = fo
+        self.stream = stream
         self.reader_schema = reader_schema
 
         self._read_header()
@@ -607,7 +609,7 @@ class Reader(object):
     def _read_header(self):
         """Read the Avro Header information"""
         try:
-            self._header = read_data(self.fo, HEADER_SCHEMA)
+            self._header = read_data(self.stream, HEADER_SCHEMA)
         except Exception as exc:
             raise ReadError('Failed to read Avro header', exc)
 
@@ -636,7 +638,7 @@ class Reader(object):
 
         # Alias these values so the code won't need to keep performing
         # attribute lookups on `self` (small optimization)
-        fo = self.fo
+        stream = self.stream
         sync_marker = self._sync_marker
         writer_schema = self.writer_schema
         reader_schema = self.reader_schema
@@ -653,13 +655,13 @@ class Reader(object):
 
         try:
             while True:
-                block_count = read_long(fo)
-                read_block(fo, block_buf)
+                block_count = read_long(stream)
+                read_block(stream, block_buf)
 
                 for i in xrange(block_count):
                     yield read_data(block_buf, writer_schema, reader_schema)
 
-                skip_sync(fo, sync_marker)
+                skip_sync(stream, sync_marker)
 
         except EOFError:
             pass
@@ -671,15 +673,15 @@ class Reader(object):
 iter_avro = Reader
 
 
-def schemaless_reader(fo, schema):
+def schemaless_reader(stream, schema):
     """Reads a single record writen with `fastavro.schemaless_writer`
 
     Paramaters
     ----------
-    fo: file-like object
+    stream: file-like object
         Input file or stream
     schema: dict
         Avro "reader's schema"
     """
     acquaint_schema(schema)
-    return read_data(fo, schema)
+    return read_data(stream, schema)

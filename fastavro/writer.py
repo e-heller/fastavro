@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-"""Python code for writing AVRO files"""
+"""Python implementation for writing Apache Avro files"""
 
 
 # This code is based on the Apache 'avro' pacakge, found at:
@@ -46,21 +46,21 @@ LONG_MAX_VALUE = (1 << 63) - 1
 
 # ---- Writing Avro primitives -----------------------------------------------#
 
-def write_null(fo, datum, schema=None):
+def write_null(stream, datum, schema=None):
     """A `null` value is not written at all."""
     pass
 
 
-def write_boolean(fo, datum, schema=None):
+def write_boolean(stream, datum, schema=None):
     """A `boolean` value is written as a single byte: b'0x00' for False,
     b'0x01' for True.
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    fo.write(b'\x01' if datum else b'\x00')
+    stream.write(b'\x01' if datum else b'\x00')
 
 
-def write_long(fo, datum, schema=None):
+def write_long(stream, datum, schema=None):
     """An `int` or `long` value is written as 32-bit or 64-bit integer,
     respectively, using a variable-length zig-zag encoding. This is the same
     encoding used in Google protobufs.
@@ -72,16 +72,16 @@ def write_long(fo, datum, schema=None):
     """  # noqa
     datum = (datum << 1) ^ (datum >> 63)
     while (datum & ~0x7F) != 0:
-        fo.write(pack('B', (datum & 0x7f) | 0x80))
+        stream.write(pack('B', (datum & 0x7f) | 0x80))
         datum >>= 7
-    fo.write(pack('B', datum))
+    stream.write(pack('B', datum))
 
 
 # Alias `write_int` to `write_long`
 write_int = write_long
 
 
-def write_float(fo, datum, schema=None):
+def write_float(stream, datum, schema=None):
     """A `float` value is written as a single precision 32-bit IEEE 754
     floating-point value in little-endian format.
 
@@ -89,10 +89,10 @@ def write_float(fo, datum, schema=None):
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    fo.write(pack('<f', datum))
+    stream.write(pack('<f', datum))
 
 
-def write_double(fo, datum, schema=None):
+def write_double(stream, datum, schema=None):
     """A `double` value is written as a double precision 64-bit IEEE 754
     floating-point value in little-endian format.
 
@@ -100,20 +100,20 @@ def write_double(fo, datum, schema=None):
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    fo.write(pack('<d', datum))
+    stream.write(pack('<d', datum))
 
 
-def write_bytes(fo, datum, schema=None):
+def write_bytes(stream, datum, schema=None):
     """A `bytes` value is written as a `long` (length of the byte string),
     immediately followed by the raw byte data.
 
     Reference: https://avro.apache.org/docs/current/spec.html#binary_encode_primitive
     """  # noqa
-    write_long(fo, len(datum))
-    fo.write(datum)
+    write_long(stream, len(datum))
+    stream.write(datum)
 
 
-def write_string(fo, datum, schema=None):
+def write_string(stream, datum, schema=None):
     """A `string` value is written as a `long` (length of the UTF-8 encoded
     string), immediately followed by the UTF-8 encoded byte data.
 
@@ -124,13 +124,13 @@ def write_string(fo, datum, schema=None):
     byte_str = (
         datum.encode('utf-8') if isinstance(datum, _unicode_type) else datum
     )
-    write_long(fo, len(byte_str))
-    fo.write(byte_str)
+    write_long(stream, len(byte_str))
+    stream.write(byte_str)
 
 
 # ---- Writing Avro complex types --------------------------------------------#
 
-def write_fixed(fo, datum, schema=None):
+def write_fixed(stream, datum, schema=None):
     """A `fixed` value is written as raw bytes. The length of the byte data
     is declared in the schema.
 
@@ -140,10 +140,10 @@ def write_fixed(fo, datum, schema=None):
 
     Reference: https://avro.apache.org/docs/current/spec.html#Fixed
     """
-    fo.write(datum)
+    stream.write(datum)
 
 
-def write_enum(fo, datum, schema):
+def write_enum(stream, datum, schema):
     """An `enum` value is written as an `int` representing the zero-based
     position of the symbol in the schema.
 
@@ -153,17 +153,17 @@ def write_enum(fo, datum, schema):
     Reference: https://avro.apache.org/docs/current/spec.html#Enums
     """
     index = schema['symbols'].index(datum)
-    write_int(fo, index)
+    write_int(stream, index)
 
 
-def write_array(fo, datum, schema):
+def write_array(stream, datum, schema):
     """An `array` value is written as a series of blocks.
 
     Each block consists of a `long` `count` value, followed by that many array
     items. A block with `count` zero indicates the end of the array. Each item
     is encoded per the array's item schema.
 
-    If a block's `count` is negative, then the count is followed immediately
+    If a block's `count` is negative, then the `count` is followed immediately
     by a `long` block size, indicating the number of bytes in the block. The
     actual `count` in this case is the absolute value of the `count` written.
 
@@ -173,14 +173,14 @@ def write_array(fo, datum, schema):
     """
     datum_len = len(datum)
     if datum_len:
-        write_long(fo, datum_len)
+        write_long(stream, datum_len)
         dtype = schema['items']
         for item in datum:
-            write_data(fo, item, dtype)
-    write_long(fo, 0)
+            write_data(stream, item, dtype)
+    write_long(stream, 0)
 
 
-def write_map(fo, datum, schema):
+def write_map(stream, datum, schema):
     """A `map` value is written as a series of blocks.
 
     Each block consists of a `long` `count` value, followed by that many
@@ -200,15 +200,15 @@ def write_map(fo, datum, schema):
     """
     datum_len = len(datum)
     if datum_len:
-        write_long(fo, datum_len)
+        write_long(stream, datum_len)
         vtype = schema['values']
         for key, val in iteritems(datum):
-            write_string(fo, key)
-            write_data(fo, val, vtype)
-    write_long(fo, 0)
+            write_string(stream, key)
+            write_data(stream, val, vtype)
+    write_long(stream, 0)
 
 
-def write_union(fo, datum, schema):
+def write_union(stream, datum, schema):
     """A `union` value is written as a `long` indicating the zero-based
     position of the `value` in the union's schema, immediately followed by
     the `value`, written per the indicated schema within the union.
@@ -223,11 +223,11 @@ def write_union(fo, datum, schema):
             '%r (type %s) does not match the schema: %s'
             % (datum, type(datum), schema)
         )
-    write_long(fo, index)
-    write_data(fo, datum, schema[index])
+    write_long(stream, index)
+    write_data(stream, datum, schema[index])
 
 
-def write_record(fo, datum, schema):
+def write_record(stream, datum, schema):
     """A `record` value is written by encoding the values of its fields in the
     order in which they are declared. In other words, a `record` is written
     as just the concatenation of the encodings of its fields. Field values
@@ -237,7 +237,7 @@ def write_record(fo, datum, schema):
     """
     for field in schema['fields']:
         value = datum.get(field['name'], field.get('default'))
-        write_data(fo, value, field['type'])
+        write_data(stream, value, field['type'])
 
 
 # ---- Validation of data with Schema ----------------------------------------#
@@ -343,13 +343,13 @@ WRITERS = {
 }
 
 
-def write_data(fo, datum, schema):
-    """Write a `datum` of data to the output stream `fo` using the
-    specified Avro `schema`.
+def write_data(stream, datum, schema):
+    """Write a `datum` of data to the output `stream` using the specified
+    Avro `schema`.
 
     Paramaters
     ----------
-    fo: file-like object
+    stream: file-like object
         Output file or stream
     datum: object
         Data to write
@@ -362,34 +362,34 @@ def write_data(fo, datum, schema):
         record_type = 'union'
     else:
         record_type = schema
-    return WRITERS[record_type](fo, datum, schema)
+    WRITERS[record_type](stream, datum, schema)
 
 
 # ---- Block Encoders --------------------------------------------------------#
 
-def null_write_block(fo, block_bytes):
+def null_write_block(stream, block_bytes):
     """Write a block of bytes with no codec ('null' codec)."""
-    write_long(fo, len(block_bytes))
-    fo.write(block_bytes)
+    write_long(stream, len(block_bytes))
+    stream.write(block_bytes)
 
 
-def deflate_write_block(fo, block_bytes):
+def deflate_write_block(stream, block_bytes):
     """Write a block of bytes with the 'deflate' codec."""
     # The first two and last characters are zlib wrappers around deflate data
     data = compress(block_bytes)[2:-1]
-    write_long(fo, len(data))
-    fo.write(data)
+    write_long(stream, len(data))
+    stream.write(data)
 
 
-def snappy_write_block(fo, block_bytes):
+def snappy_write_block(stream, block_bytes):
     """Write a block of bytes wih the 'snappy' codec."""
     data = snappy.compress(block_bytes)
     # Add 4 bytes for the CRC32
-    write_long(fo, len(data) + 4)
-    fo.write(data)
+    write_long(stream, len(data) + 4)
+    stream.write(data)
     # Write the 4-byte, big-endian CRC32 checksum
     crc = crc32(block_bytes) & 0xFFFFFFFF
-    fo.write(pack('>I', crc))
+    stream.write(pack('>I', crc))
 
 
 # ---- Schema Handling -------------------------------------------------------#
@@ -403,12 +403,14 @@ def get_schema_defs():
 
 
 def acquaint_schema(schema, repo=None):
-    """Extract schema into repo (default WRITERS)"""
+    """Extract `schema` into `repo` (default WRITERS)"""
     repo = WRITERS if repo is None else repo
     extract_named_schemas_into_repo(
         schema,
         repo,
-        lambda schema: lambda fo, datum, _: write_data(fo, datum, schema),
+        lambda schema: (
+            lambda stream, datum, _: write_data(stream, datum, schema)
+        ),
     )
     extract_named_schemas_into_repo(
         schema,
@@ -417,7 +419,7 @@ def acquaint_schema(schema, repo=None):
     )
 
 
-def write_header(fo, metadata, sync_marker):
+def write_header(stream, metadata, sync_marker):
     """Write the Avro header"""
     # Note: values in the `meta` dict are written as bytes.
     # See the definition of HEADER_SCHEMA in schema.py
@@ -429,23 +431,25 @@ def write_header(fo, metadata, sync_marker):
         ),
         'sync': sync_marker,
     }
-    write_data(fo, header, HEADER_SCHEMA)
+    write_data(stream, header, HEADER_SCHEMA)
 
 
 # ---- Public API - Writing Avro Files ---------------------------------------#
 
-def writer(fo,
-           schema,
-           records,
-           codec='null',
-           sync_interval=SYNC_INTERVAL,
-           metadata=None):
-    """Write multiple `records` to the output stream `fo` using the
-    specified Avro `schema`.
+def writer(
+    stream,
+    schema,
+    records,
+    codec='null',
+    sync_interval=SYNC_INTERVAL,
+    metadata=None
+):
+    """Write multiple `records` to the output `stream` using the specified
+    Avro `schema`.
 
     Paramaters
     ----------
-    fo: file-like object
+    stream: file-like object
         Output file or stream
     schema: dict
         An Avro schema, typically a dict
@@ -482,7 +486,7 @@ def writer(fo,
     >>> ]
     >>>
     >>> with open('weather.avro', 'wb') as out:
-    >>>     fastavro.writer(out, schema, records)
+    >>>     fastavro.write(out, schema, records)
     """
     # Default values
     codec = codec or 'null'
@@ -507,7 +511,7 @@ def writer(fo,
     sync_marker = urandom(SYNC_SIZE)
     metadata['avro.codec'] = codec
     metadata['avro.schema'] = json.dumps(schema)
-    write_header(fo, metadata, sync_marker)
+    write_header(stream, metadata, sync_marker)
 
     # Register the schema
     acquaint_schema(schema)
@@ -519,29 +523,29 @@ def writer(fo,
         write_data(buf, record, schema)
         block_count += 1
         if buf.tell() >= sync_interval:
-            write_long(fo, block_count)
-            block_writer(fo, buf.getvalue())
-            fo.write(sync_marker)
+            write_long(stream, block_count)
+            block_writer(stream, buf.getvalue())
+            stream.write(sync_marker)
             buf.truncate(0)
             buf.seek(0)
             block_count = 0
 
     if buf.tell() or block_count > 0:
-        write_long(fo, block_count)
-        block_writer(fo, buf.getvalue())
-        fo.write(sync_marker)
+        write_long(stream, block_count)
+        block_writer(stream, buf.getvalue())
+        stream.write(sync_marker)
 
-    fo.flush()
+    stream.flush()
     buf.close()
 
 
-def schemaless_writer(fo, schema, record):
-    """Write a single `record` to the output stream `fo` without
-    writing the Avro schema and header information.
+def schemaless_writer(stream, schema, record):
+    """Write a single `record` to the output `stream` without writing the Avro
+    schema and header information.
 
     Paramaters
     ----------
-    fo: file-like object
+    stream: file-like object
         Output file or stream
     schema: dict
         Schema for `record`. (This is not written to the output stream,
@@ -550,4 +554,4 @@ def schemaless_writer(fo, schema, record):
         Record to write
     """
     acquaint_schema(schema)
-    write_data(fo, record, schema)
+    write_data(stream, record, schema)
