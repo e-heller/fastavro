@@ -66,38 +66,42 @@ class NoSeekBytesIO(object):
     def seek(self, *args):
         raise AssertionError("fastavro reader should not depend on seek")
 
+    def close(self):
+        self.underlying.close()
+
 
 def read_write_file(filename):
     with open(filename, 'rb') as fo:
         reader = fastavro.reader(fo)
-        assert hasattr(reader, 'schema'), 'no schema on file'
+        assert hasattr(reader, 'schema'), 'Failed to read schema'
 
         if basename(filename) in NO_DATA:
             return
 
         records = list(reader)
-        assert len(records) > 0, 'no records found'
+        assert len(records) > 0, 'No records found'
 
-    new_file = BytesIO()
-    fastavro.writer(new_file, reader.schema, records, reader.codec)
-    new_file_bytes = new_file.getvalue()
+    write_buf = BytesIO()
+    fastavro.writer(write_buf, reader.schema, records, reader.codec)
+    serialized_data = write_buf.getvalue()
+    write_buf.close()
 
-    new_file = NoSeekBytesIO(new_file_bytes)
-    new_reader = fastavro.reader(new_file)
-    assert hasattr(new_reader, 'schema'), "schema wasn't written"
-    assert new_reader.schema == reader.schema
-    assert new_reader.codec == reader.codec
-    new_records = list(new_reader)
-
+    read_buf = NoSeekBytesIO(serialized_data)
+    read_back = fastavro.reader(read_buf)
+    assert hasattr(read_back, 'schema'), 'Schema was not written'
+    assert read_back.schema == reader.schema
+    assert read_back.codec == reader.codec
+    new_records = list(read_back)
     assert new_records == records
+    read_buf.close()
 
     # Test schema migration with the same schema
-    new_file = NoSeekBytesIO(new_file_bytes)
-    schema_migration_reader = fastavro.reader(new_file, reader.schema)
+    read_buf = NoSeekBytesIO(serialized_data)
+    schema_migration_reader = fastavro.reader(read_buf, reader.schema)
     assert schema_migration_reader.reader_schema == reader.schema
     new_records = list(schema_migration_reader)
-
     assert new_records == records
+    read_buf.close()
 
 
 def test_read_write_files():
