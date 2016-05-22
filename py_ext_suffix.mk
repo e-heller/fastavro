@@ -2,7 +2,7 @@
 # This might not be correct in all circumstances
 
 define PY_SO_SUFFIX_S
-import sysconfig
+from distutils import sysconfig
 SO = sysconfig.get_config_var("EXT_SUFFIX")
 if not SO:
     SO = sysconfig.get_config_var("SO")
