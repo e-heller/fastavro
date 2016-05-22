@@ -724,8 +724,8 @@ cdef populate_schema_defs(schema, repo):
 
 # ---- Public API - Reading Avro Files ---------------------------------------#
 
-cpdef PyReader(stream, reader_schema=None):
-    return Reader(stream, reader_schema)
+class PyReader(Reader):
+    pass
 
 
 cdef class Reader(object):
@@ -744,7 +744,7 @@ cdef class Reader(object):
     cdef readonly unicode codec
     cdef readonly object _iterator
 
-    def __cinit__(self, stream, reader_schema=None):
+    def __init__(self, stream, reader_schema=None):
         """Creates an Avro reader as an iterator over the records in the Avro
         file `stream`, optionally migrating to the `reader_schema` if provided.
 
