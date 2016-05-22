@@ -47,8 +47,8 @@ def _exc_name(exc):
 class UnexpectedException(AssertionError):
     def __init__(self, expected, raised):
         msg = (
-            "Expected '%s' Exception. '%s' raised instead"
-            % (_exc_name(expected), _exc_name(raised))
+            "\nExpected '%s' Exception. '%s' raised instead:\n%s\n"
+            % (_exc_name(expected), _exc_name(raised), raised)
         )
         super(UnexpectedException, self).__init__(msg)
 
@@ -514,6 +514,52 @@ def test_default_values():
     new_reader = fastavro.reader(new_file)
     new_records = list(new_reader)
     assert new_records == [{'default_field': 'default_value'}]
+
+
+def test_missing_value_in_record_with_no_default():
+    # See: https://github.com/tebeka/fastavro/issues/49
+    schema = {
+        'name': 'default_test',
+        'type': 'record',
+        'fields': [{
+            'name': 'test',
+            'type': 'string',
+        }],
+    }
+    new_file = BytesIO()
+    records = [{}]
+
+    try:
+        fastavro.writer(new_file, schema, records)
+    except TypeError:
+        pass
+    except Exception as exc:
+        raise UnexpectedException(TypeError, exc)
+    else:
+        assert False, 'TypeError not raised'
+
+
+def test_missing_value_for_null_union_in_record_with_no_default():
+    # See: https://github.com/tebeka/fastavro/issues/49
+    schema = {
+        'name': 'default_test',
+        'type': 'record',
+        'fields': [{
+            'name': 'test',
+            'type': ['int', 'null'],
+        }],
+    }
+    new_file = BytesIO()
+    records = [{}]
+
+    try:
+        fastavro.writer(new_file, schema, records)
+    except ValueError:
+        pass
+    except Exception as exc:
+        raise UnexpectedException(ValueError, exc)
+    else:
+        assert False, 'ValueError not raised'
 
 
 def test_boolean_roundtrip():

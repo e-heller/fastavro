@@ -51,6 +51,16 @@ cdef Endianness double_format = get_double_format()
 cdef Endianness float_format = get_float_format()
 
 
+cdef class _NoValue(object):
+    def __repr__(self):
+        return '<NoValue>'
+
+    def __str__(self):
+        return repr(self)
+
+NoValue = _NoValue()
+
+
 # ---- Writing Avro primitives -----------------------------------------------#
 
 cdef inline int write_null(Stream stream, datum, schema) except -1:
@@ -298,7 +308,7 @@ cdef inline int write_record(Stream stream, dict datum, dict schema) except -1:
     """
     cdef dict field
     for field in schema['fields']:
-        value = datum.get(field['name'], field.get('default'))
+        value = datum.get(field['name'], field.get('default', NoValue))
         write_data(stream, value, field['type'])
 
 
@@ -327,9 +337,8 @@ cdef bint validate(datum, schema) except -1:
     Determine if a python datum is an instance of a schema.
 
     This function is only called by `write_union`. Unfortunately, this function
-    creates significant overhead for writing `union` types.
-    I've optimized this function as well as I know how -- but any new ideas
-    would be especially welcomed to help reduce this overhead cost.
+    creates significant overhead for writing `union` types. Any ideas to
+    improve this function would be especially welcomed.
     """
 
     if isinstance(schema, dict):
@@ -375,7 +384,9 @@ cdef bint validate(datum, schema) except -1:
     elif h_type in (h_record, h_error):
         if isinstance(datum, Mapping):
             for f in schema['fields']:
-                if not validate(datum.get(f['name']), f['type']):
+                if not validate(
+                    datum.get(f['name'], f.get('default', NoValue)), f['type']
+                ):
                     return False
             return True
         return False

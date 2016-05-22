@@ -44,6 +44,16 @@ LONG_MIN_VALUE = -(1 << 63)
 LONG_MAX_VALUE = (1 << 63) - 1
 
 
+class _NoValue(object):
+    def __repr__(self):
+        return '<NoValue>'
+
+    def __str__(self):
+        return repr(self)
+
+NoValue = _NoValue()
+
+
 # ---- Writing Avro primitives -----------------------------------------------#
 
 def write_null(stream, datum, schema=None):
@@ -236,14 +246,20 @@ def write_record(stream, datum, schema):
     Reference: https://avro.apache.org/docs/current/spec.html#schema_record
     """
     for field in schema['fields']:
-        value = datum.get(field['name'], field.get('default'))
+        value = datum.get(field['name'], field.get('default', NoValue))
         write_data(stream, value, field['type'])
 
 
 # ---- Validation of data with Schema ----------------------------------------#
 
 def validate(datum, schema):
-    """Determine if a python datum is an instance of a schema."""
+    """
+    Determine if a python datum is an instance of a schema.
+
+    This function is only called by `write_union`. Unfortunately, this function
+    creates significant overhead for writing `union` types. Any ideas to
+    improve this function would be especially welcomed.
+    """
 
     if isinstance(schema, dict):
         record_type = schema['type']
@@ -306,10 +322,12 @@ def validate(datum, schema):
         return (
             isinstance(datum, Mapping) and
             all(
-                validate(datum.get(f['name']), f['type'])
+                validate(datum.get(f['name'], f.get('default', NoValue)),
+                         f['type'])
                 for f in schema['fields']
             )
         )
+
     else:
         record_type = SCHEMA_DEFS.get(record_type)
         if record_type:
