@@ -119,4 +119,3 @@ SYNC_INTERVAL = _schema.SYNC_INTERVAL
 __all__ = [
     _n for _n in locals().keys() if not _n.startswith('_')
 ] + ['__version__', '__version_info__']
-del _n
