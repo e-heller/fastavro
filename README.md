@@ -1,5 +1,5 @@
-fastavro
-========
+fastavro - Now even faster!
+===========================
 
 The Python [`avro`][avro_pypi] package distributed by 
 [Apache][apache_avro] is **incredibly slow**. When dealing with very 
@@ -7,19 +7,19 @@ large datasets, the performance of [`avro`][avro_pypi] is unacceptable,
 more or less unfit for any production use.
 
 **`fastavro`** is less feature complete than [`avro`][avro_pypi], 
-however performance reading and writing Avro files is *significantly*
+however performance reading and writing Avro files is significantly
 faster.
 
-If you compile the optional [Cython][cython] C-extension modules, then 
-**`fastavro`** is even faster, almost on par with the native Java
-implementation of Avro.
+With the [Cython][cython] extension modules compiled, **`fastavro`**
+is **really** fast, almost on par with the native Java implementation
+of Avro.
 
-The focus of this fork ([e-heller/fastavro]) is to improve the 
-Cython implementation of `fastavro` to achieve performance that is
-even faster. So far I've managed some success.
+The focus of this fork ([e-heller/fastavro]) is on reimplementing and 
+optimizing `fastavro's` [Cython][cython] extension modules in *pure
+Cython code* to achieve screaming speed.
 
 I hope these improvements will eventually be pulled into the upstream 
-repo, but I'm not very optimistic that will happen anytime soon.
+repo, but that may take some time.
 
 This **`fastavro`** fork supports these Python versions:
 
@@ -33,6 +33,47 @@ This **`fastavro`** fork supports these Python versions:
 [avro_pypi]: https://pypi.python.org/pypi/avro
 [apache_avro]: http://avro.apache.org
 [Cython]: http://cython.org
+
+
+Build and Install
+=================
+
+Because **`fastavro`** is shipped with [Cython][cython] extension
+modules, you will require the following to build and install:
+
+1. [Cython][cython_pypi] to generate the C extension files
+
+2. Some kind of C compiler like `gcc`
+
+If you can't compile the extension modules, you can still use the
+*pure Python* implementation, but you will be missing out on the
+significant performance improvements.
+
+Compile the source
+------------------
+
+First, download [Cython][cython_pypi]:
+
+```shell
+$ pip install cython
+```
+
+To build the compiled extensions, from the root `fastavro` source
+directory:
+
+```shell
+$ make cfiles
+$ python setup.py build
+```
+
+Install the package
+-------------------
+
+Assuming the build worked, now you can just type:
+
+```shell
+$ python setup.py install
+```
 
 
 Basic Usage
@@ -93,42 +134,21 @@ with open('some_file.avro', 'wb') as out:
 ```
 
 
-Command line script
--------------------
-
-You can use the `fastavro` script from the command line to dump 
-`avro` files to `stdout`
-
-```bash
-$ fastavro some_file.avro
-```
-
-By default this will print one JSON object per line. You can use the 
-`--pretty` flag to change this.
-
-You can also dump the avro schema:
-
-```bash
-$ fastavro --schema some_file.avro
-```
-
-
 Limitations
 ===========
 
-**`fastavro`** is missing many of the features of the Apache
+**`fastavro`** is missing many of the features of the official Apache
 [`avro`][avro_pypi] package. Essentially, **`fastavro`** only supports
-reading and writing in Avro format. 
+reading and writing in Avro format.
 
 Notably, there is no support for:
 
-* [Avro Protocols][spec_protocol] - no support at all.
+* [Avro Protocols][spec_protocol]
 
 * The [Protocol Wire Format][spec_wire_format] or any kind of Wire
-  Transmission - no support at all. 
+  Transmission
 
-
-Currently there are also some limitations in reading and writing:
+There are also some limitations with reading and writing:
 
 * Incomplete support for *'reader's schemas'* - i.e., reading an Avro
   file written with one schema (the 'writer's schema') and interpreting
@@ -140,11 +160,13 @@ Currently there are also some limitations in reading and writing:
   Avro types. See [Aliases][spec_aliases] in the Avro specification
   for details.
   
-* No support for *Logical Types* - i.e., the `logicalType` attribute
-  Avro types. See [Logical Types][spec_logical] in the Avro 
-  specification for details.
-  > *Note:* the [ViaSat/fastavro] fork currently has support for some
-  Logical Types. I hope to merge this code soon.
+* No support for *Logical Types* - i.e., the new `logicalType` attribute
+  that adds support for derived types in Avro 1.8 like `decimal`,
+  `date`, `time-millis`, `timestamp-millis`, etc.
+  See [Logical Types][spec_logical] in the Avro specification for
+  details.
+  > Note: the [ViaSat/fastavro] fork currently has support for some
+  Logical Types. I hope to incorporate this work soon.
 
 
 [spec_wire_format]: https://avro.apache.org/docs/current/spec.html#Protocol+Wire+Format
@@ -158,47 +180,45 @@ Currently there are also some limitations in reading and writing:
 Hacking
 =======
 
-As recommended by [Cython][cython], the `fastavro` distribution includes
-the Cython-generated C files. This has the advantage that the end user 
-does not need to have Cython installed. (Although a C compiler is
-required.)
+If you want to play around and modify any of the [Cython][cython]
+`.pyx` files, you will need to recompile the C module code.
 
-If you decide to modify any `fastavro/*.pyx` file, then you will
-require:
+You will require:
 
 1. [Cython][cython_pypi] to regenerate the C files
-2. Some kind of C compiler like `gcc` on Unix-y platforms
+2. Some kind of C compiler
 
-   > Note: I have also tested and successfully compiled with MSVC
-   on Windows.
+To easiest way to recompile the C extensions is as follows.
 
-Rebuilding the C extensions is easy. First, regenerate the C files.
-With the provided Makefile, you can just type `make cfiles`, which 
-will invoke `cython` to regenerate the C code for each modified file.
+From the root `fastavro` source directory:
 
-Then recompile the C files to shared object extensions (`*.so` files
-on Unix-y platforms, `*.pyd` files on Windows).
-
-The easiest way to recompile the C files is to use the included
-`setup.py` file, which utilizes Python's [`distutils`][distutils] 
-module to automatically configure the build.
-
-On the command line, navigate to the root `fastavro` directory:
-```bash
-$ make cfiles
-$ python setup.py build_ext -i
+```shell
+$ make build
 ```
 
-Currently, you can also just enter `make` to do all of the above:
-```bash
-$ make
+The `make build` command first calls `cython` to generate the C files,
+then compiles them via `setup.py`. (The exact command is
+`python setup.py build_ext -i`)
+
+If you are feeling more adventurous, and you're on a Linux-y platform
+with `gcc` you can try to compile the extensions with the GCC settings
+I personally use:
+
+```shell
+$ make compile
 ```
 
-I *definitely* recommend creating a virtual environment with your
-target Python version and installing Cython within that virtual 
-environment if you plan to modify and rebuild `fastavro`. If you are 
-unfamiliar with virtual environments, check out [virtualenv][venv]
-or [pew][pew]. I recommend [pew][pew].
+This will compile the extensions "in place" in the source directory.
+
+To install the package with your modifications, you'll just have to 
+manually copy the `fastavro` package directory to your Python
+`site-packages` directory.
+
+I definitely recommend working inside a virtual environment if you plan 
+to modify and rebuild `fastavro`. If you are unfamiliar with virtual
+environments, check out [virtualenv][venv] or [pew][pew].
+Personally, I recommend [pew][pew].
+
 
 [cython]: http://cython.org/
 [cython_pypi]: https://pypi.python.org/pypi/Cython
