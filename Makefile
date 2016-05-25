@@ -104,7 +104,7 @@ clean:
 	rm -rfv */*.o
 	rm -rfv */*.s
 	rm -rfv */*.so
-	rm -rfv */*.dll
+	rm -rfv */*.pyd
 	rm -rfv */__pycache__
 	rm -rfv */*.pyc
 	rm -rfv build dist *.egg-info
@@ -115,7 +115,7 @@ fresh: clean all
 # This requires the `check-manifest` package:
 #   https://pypi.python.org/pypi/check-manifest
 check:
-	check-manifest --ignore *.c,*.o,*.so
+	check-manifest --ignore *.c,*.o,*.so,*.pyd
 
 publish:
 	./publish.sh
