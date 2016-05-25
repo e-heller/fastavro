@@ -16,15 +16,6 @@ from __future__ import absolute_import
 
 import sys
 
-# Import unittest module (requires `unittest2` for Python 2.x)
-#if sys.version_info[0] == 2:
-#    try:
-#        import unittest2 as unittest
-#    except ImportError:
-#        raise ImportError("The 'unittest2' module is required for Python 2.x")
-#else:
-#    import unittest
-
 from fastavro.c_buffer cimport (
     Stream, ByteBuffer, cSEEK_SET, cSEEK_CUR, cSEEK_END, SSize_t, uchar,
 )
