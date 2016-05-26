@@ -204,7 +204,7 @@ cdef class ByteBuffer(Stream):
         return self.pos
 
     cdef int seek(self, SSize_t pos) except -1:
-        if not 0 <= pos <= self.buf_len:
+        if not 0 <= pos <= self.data_len:
             raise ValueError('Cannot seek to %d' % pos)
         self.pos = pos
 
@@ -219,7 +219,7 @@ cdef class ByteBuffer(Stream):
         else:
             raise NotImplementedError
 
-        if not 0 <= new_pos <= self.buf_len:
+        if not 0 <= new_pos <= self.data_len:
             raise ValueError('Cannot seek to %d' % new_pos)
         self.pos = <SSize_t>new_pos
 
