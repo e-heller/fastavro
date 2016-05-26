@@ -2,18 +2,29 @@
 """Tests for fastavro.c_buffer (ByteBuffer class)"""
 
 
-# NOTE: The ByteBuffer unit tests must be written in a Cython .pyx file, and
-# then compiled. In this module, we create a `unittest.TestCase` class and
-# dynamically add each 'test_*' function defined in `_test_byte_buffer`.
-# This is very hairy, I know.
+# NOTE: The ByteBuffer unit tests must be written in a Cython .pyx file and
+# compiled. The tests in this module are implemented as a `unittest.TestCase`.
+#
+# Theoretically, it should be as simple as importing this TestCase class into
+# the Python test module `test_byte_buffer` -- however, for some unknown reason
+# this only seems to work for Python 2, and not in Python 3. (Maybe it has
+# something to do with nosetests? I have no idea!!)
+#
+# So -- here's where things get really hairy. In the Python test module, we
+# have to find each 'test_*' method defined in our TestCase, and then
+# dynamically add the method to a *different* `unittest.TestCase` which is
+# declared in the Python module. Yes, it's ugly! But so far this is the only
+# thing that seems to work.
 
 
 from __future__ import absolute_import
 
 import sys
 
+PY2 = sys.version_info[0] == 2
+
 # Import unittest module (requires `unittest2` for Python 2.x)
-if sys.version_info[0] == 2:
+if PY2:
     try:
         import unittest2 as unittest
     except ImportError:
@@ -38,15 +49,18 @@ class TestByteBuffer(unittest.TestCase):
 def setup():
     if not _test_byte_buffer:
         return
-    module = _test_byte_buffer
-    test_funcs = [f for f in dir(module) if f.startswith('test_')]
+    if PY2:
+        # For some reason unittest2 needs a dummy `methodName` argument
+        obj = _test_byte_buffer.TestBase('dummy')
+    else:
+        obj = _test_byte_buffer.TestBase()
+    test_funcs = [f for f in dir(obj) if f.startswith('test_')]
     for f in test_funcs:
-        func = getattr(module, f)
-
-        def wrap(self):
-            func(self)
-
-        name = wrap.__name__ = func.__name__
-        setattr(TestByteBuffer, name, wrap)
+        func = getattr(obj, f)
+        setattr(TestByteBuffer, func.__name__, func)
 
 setup()
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
