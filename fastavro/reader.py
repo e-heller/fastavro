@@ -397,9 +397,8 @@ def read_record(stream, writer_schema, reader_schema=None):
             writer_fields = set(f['name'] for f in writer_schema['fields'])
             for field_name, field in iteritems(readers_field_dict):
                 if field_name not in writer_fields:
-                    default = field.get('default')
-                    if default:
-                        record[field['name']] = default
+                    if 'default' in field:
+                        record[field['name']] = field['default']
                     else:
                         msg = 'No default value for %s' % field['name']
                         raise SchemaResolutionError(msg)
