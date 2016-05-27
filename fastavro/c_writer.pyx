@@ -51,12 +51,15 @@ cdef Endianness double_format = get_double_format()
 cdef Endianness float_format = get_float_format()
 
 
-cdef class _NoValue(object):
+class _NoValue(object):
     def __repr__(self):
         return '<NoValue>'
 
-    def __str__(self):
-        return repr(self)
+    def __bool__(self):
+        raise TypeError('%r has no bool value' % self)
+
+    # Python 2 uses '__nonzero__' rather than '__bool__'
+    __nonzero__ = __bool__
 
 NoValue = _NoValue()
 

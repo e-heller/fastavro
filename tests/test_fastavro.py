@@ -539,6 +539,29 @@ def test_missing_value_in_record_with_no_default():
         assert False, 'TypeError not raised'
 
 
+def test_missing_value_in_bool_type_record_with_no_default():
+    # See: https://github.com/tebeka/fastavro/issues/49
+    schema = {
+        'name': 'default_test',
+        'type': 'record',
+        'fields': [{
+            'name': 'test_bool',
+            'type': 'boolean',
+        }],
+    }
+    new_file = BytesIO()
+    records = [{}]
+
+    try:
+        fastavro.writer(new_file, schema, records)
+    except TypeError:
+        pass
+    except Exception as exc:
+        raise UnexpectedException(TypeError, exc)
+    else:
+        assert False, 'TypeError not raised'
+
+
 def test_missing_value_for_null_union_in_record_with_no_default():
     # See: https://github.com/tebeka/fastavro/issues/49
     schema = {
