@@ -3,9 +3,20 @@
 
 from __future__ import absolute_import
 
+import re
 import sys
 from glob import iglob
 from os.path import join, abspath, dirname, basename
+
+try:
+    # Import unittest module (requires `unittest2` for Python 2.x)
+    PY2 = sys.version_info[0] == 2
+    if PY2:
+        import unittest2 as unittest
+    else:
+        import unittest
+except ImportError:
+    raise ImportError("The 'unittest2' module is required for Python 2.x")
 
 try:
     from cStringIO import StringIO as BytesIO
@@ -33,26 +44,6 @@ NO_DATA = set([
 ])
 
 
-def _exc_name(exc):
-    cls = getattr(exc, '__class__', None)
-    cls_name = getattr(cls, '__name__', None) if cls else None
-    if cls_name and cls_name != 'type':
-        return str(cls_name)
-    name = getattr(exc, '__name__', None)
-    if name:
-        return str(name)
-    return str(type(exc))
-
-
-class UnexpectedException(AssertionError):
-    def __init__(self, expected, raised):
-        msg = (
-            "\nExpected '%s' Exception. '%s' raised instead:\n%s\n"
-            % (_exc_name(expected), _exc_name(raised), raised)
-        )
-        super(UnexpectedException, self).__init__(msg)
-
-
 class NoSeekBytesIO(object):
     """Shim around BytesIO which blocks access to everything but read.
     Used to ensure seek API isn't being depended on."""
@@ -70,1255 +61,1116 @@ class NoSeekBytesIO(object):
         self.underlying.close()
 
 
-def read_write_file(filename):
-    with open(filename, 'rb') as fo:
-        reader = fastavro.reader(fo)
-        assert hasattr(reader, 'schema'), 'Failed to read schema'
+class TestReadWrite(unittest.TestCase):
 
-        if basename(filename) in NO_DATA:
-            return
+    def read_write_file(self, filename):
+        with open(filename, 'rb') as input:
+            reader = fastavro.Reader(input)
+            self.assertTrue(hasattr(reader, 'schema'), 'Failed to read schema')
+            if basename(filename) in NO_DATA:
+                return
+            records = list(reader)
+            self.assertGreaterEqual(len(records), 0, 'No records found')
 
-        records = list(reader)
-        assert len(records) > 0, 'No records found'
+        write_buffer = BytesIO()
+        fastavro.write(write_buffer, reader.schema, records, reader.codec)
+        serialized_data = write_buffer.getvalue()
+        write_buffer.close()
 
-    write_buf = BytesIO()
-    fastavro.writer(write_buf, reader.schema, records, reader.codec)
-    serialized_data = write_buf.getvalue()
-    write_buf.close()
+        # Read back output from `fastavro.write`
+        read_buffer = BytesIO(serialized_data)
+        output_reader = fastavro.Reader(read_buffer)
+        self.assertTrue(hasattr(output_reader, 'schema'),
+                        'Schema was not written')
+        self.assertEqual(output_reader.schema, reader.schema)
+        self.assertEqual(output_reader.codec, reader.codec)
+        new_records = list(output_reader)
+        self.assertEqual(new_records, records)
+        read_buffer.close()
 
-    read_buf = BytesIO(serialized_data)
-    read_back = fastavro.reader(read_buf)
-    assert hasattr(read_back, 'schema'), 'Schema was not written'
-    assert read_back.schema == reader.schema
-    assert read_back.codec == reader.codec
-    new_records = list(read_back)
-    assert new_records == records
-    read_buf.close()
+        # Test schema migration with the same schema
+        read_buffer = BytesIO(serialized_data)
+        migration_reader = fastavro.Reader(read_buffer, reader.schema)
+        self.assertTrue(hasattr(migration_reader, 'schema'),
+                        'Schema was not written')
+        self.assertEqual(migration_reader.reader_schema, reader.schema)
+        self.assertEqual(output_reader.codec, reader.codec)
+        new_records = list(migration_reader)
+        self.assertEqual(new_records, records)
+        read_buffer.close()
 
-    # Test schema migration with the same schema
-    read_buf = BytesIO(serialized_data)
-    schema_migration_reader = fastavro.reader(read_buf, reader.schema)
-    assert schema_migration_reader.reader_schema == reader.schema
-    new_records = list(schema_migration_reader)
-    assert new_records == records
-    read_buf.close()
+    def test_not_avro(self):
+        with self.assertRaises(ReadError):
+            with open(__file__, 'rb') as input:
+                fastavro.Reader(input)
+
+    def test_empty(self):
+        io = BytesIO()
+        schema = {
+            'name': 'test',
+            'type': 'record',
+            'fields': [
+                {'type': 'boolean', 'name': 'a'},
+            ],
+        }
+        with self.assertRaises(ReadError):
+            fastavro.load(io, schema)
 
 
-def test_read_write_files():
+def setup_read_write():
     filenames = iglob(join(data_dir, '*.avro'))
-    for filename in sorted(filenames):
+    for idx, filename in enumerate(sorted(filenames)):
         if 'snappy' in filename and not snappy:
             continue
-        yield read_write_file, filename
+
+        def wrapper(self):
+            with self.subTest('Test file: %s' % filename):
+                self.read_write_file(filename)
+
+        name, ext = basename(filename).rsplit('.', 1)
+        name = re.sub(r'\s|-|\.', '_', name)
+        func_name = 'test_file_%s' % name
+        wrapper.__name__ = func_name
+        setattr(TestReadWrite, func_name, wrapper)
+
+setup_read_write()
 
 
-def test_not_avro():
-    try:
-        with open(__file__, 'rb') as fo:
-            fastavro.reader(fo)
-    except ReadError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(ReadError, exc)
-    else:
-        assert False, 'ReadError not raised: Opened non-avro file'
+class TestAcquaintSchema(unittest.TestCase):
 
+    def check_exception(self, exc, substrs):
+        substrs = substrs if isinstance(substrs, (list, tuple)) else (substrs,)
+        self.assertTrue(
+            all("'%s'" % s in str(exc) for s in substrs),
+            'Incorrect exception raised: %s' % repr(exc)
+        )
 
-def test_acquaint_schema_rejects_undeclared_name():
-    try:
+    def test_acquaint_schema_rejects_undeclared_name(self):
+        with self.assertRaises(UnknownType) as err:
+            fastavro.acquaint_schema({
+                'name': 'schema_test',
+                'type': 'record',
+                'fields': [{
+                    'name': 'left',
+                    'type': 'Thinger',
+                }],
+            })
+        self.assertEqual(err.exception.name, 'Thinger')
+
+    def test_acquaint_schema_rejects_unordered_references(self):
+        with self.assertRaises(UnknownType) as err:
+            fastavro.acquaint_schema({
+                'name': 'schema_test',
+                'type': 'record',
+                'fields': [{
+                    'name': 'left',
+                    'type': 'Thinger',
+                }, {
+                    'name': 'right',
+                    'type': {
+                        'name': 'Thinger',
+                        'type': 'record',
+                        'fields': [{
+                            'name': 'the_thing',
+                            'type': 'string',
+                        }],
+                    },
+                }],
+            })
+        self.assertEqual(err.exception.name, 'Thinger')
+
+    def test_acquaint_schema_accepts_nested_namespaces(self):
         fastavro.acquaint_schema({
-            'name': 'schema_test',
+            'namespace': 'com.example',
+            'name': 'Outer',
             'type': 'record',
             'fields': [{
-                'name': 'left',
-                'type': 'Thinger',
-            }],
-        })
-    except UnknownType as e:
-        assert 'Thinger' == e.name
-    except Exception as exc:
-        raise UnexpectedException(UnknownType, exc)
-    else:
-        assert False, 'UnknownType not raised'
-
-
-def test_acquaint_schema_rejects_unordered_references():
-    try:
-        fastavro.acquaint_schema({
-            'name': 'schema_test',
-            'type': 'record',
-            'fields': [{
-                'name': 'left',
-                'type': 'Thinger',
-            }, {
-                'name': 'right',
+                'name': 'a',
                 'type': {
-                    'name': 'Thinger',
+                    'name': 'Inner',
                     'type': 'record',
                     'fields': [{
                         'name': 'the_thing',
                         'type': 'string',
                     }],
                 },
+            }, {
+                'name': 'b',
+                # This should resolve to com.example.Inner because of the
+                # `namespace` of the enclosing record.
+                'type': 'Inner',
+            }, {
+                'name': 'b',
+                'type': 'com.example.Inner',
             }],
         })
-    except UnknownType as e:
-        assert 'Thinger' == e.name
-    except Exception as exc:
-        raise UnexpectedException(UnknownType, exc)
-    else:
-        assert False, 'UnknownType not raised'
+        self.assertIn('com.example.Inner', fastavro._writer.get_schema_defs())
 
-
-def test_acquaint_schema_accepts_nested_namespaces():
-    fastavro.acquaint_schema({
-        'namespace': 'com.example',
-        'name': 'Outer',
-        'type': 'record',
-        'fields': [{
-            'name': 'a',
-            'type': {
-                'name': 'Inner',
-                'type': 'record',
-                'fields': [{
-                    'name': 'the_thing',
-                    'type': 'string',
-                }],
-            },
-        }, {
-            'name': 'b',
-            # This should resolve to com.example.Inner because of the
-            # `namespace` of the enclosing record.
-            'type': 'Inner',
-        }, {
-            'name': 'b',
-            'type': 'com.example.Inner',
-        }],
-    })
-    assert 'com.example.Inner' in fastavro._writer.get_schema_defs()
-
-
-def test_acquaint_schema_resolves_references_from_unions():
-    fastavro.acquaint_schema({
-        'namespace': 'com.other',
-        'name': 'Outer',
-        'type': 'record',
-        'fields': [{
-            'name': 'a',
-            'type': ['null', {
-                'name': 'Inner',
-                'type': 'record',
-                'fields': [{
-                    'name': 'the_thing',
-                    'type': 'string',
-                }],
-            }],
-        }, {
-            'name': 'b',
-            # This should resolve to com.example.Inner because of the
-            # `namespace` of the enclosing record.
-            'type': ['null', 'Inner'],
-        }],
-    })
-    schema_defs = fastavro._writer.get_schema_defs()
-    b_schema = schema_defs['com.other.Outer']['fields'][1]
-    assert b_schema['type'][1] == 'com.other.Inner'
-
-
-def test_acquaint_schema_accepts_nested_records_from_arrays():
-    fastavro.acquaint_schema({
-        'name': 'Outer',
-        'type': 'record',
-        'fields': [{
-            'name': 'multiple',
-            'type': {
-                'type': 'array',
-                'items': {
-                    'name': 'Nested',
+    def test_acquaint_schema_resolves_references_from_unions(self):
+        fastavro.acquaint_schema({
+            'namespace': 'com.other',
+            'name': 'Outer',
+            'type': 'record',
+            'fields': [{
+                'name': 'a',
+                'type': ['null', {
+                    'name': 'Inner',
                     'type': 'record',
-                    'fields': [{'type': 'string', 'name': 'text'}],
+                    'fields': [{
+                        'name': 'the_thing',
+                        'type': 'string',
+                    }],
+                }],
+            }, {
+                'name': 'b',
+                # This should resolve to com.example.Inner because of the
+                # `namespace` of the enclosing record.
+                'type': ['null', 'Inner'],
+            }],
+        })
+        schema_defs = fastavro._writer.get_schema_defs()
+        b_schema = schema_defs['com.other.Outer']['fields'][1]
+        self.assertEqual(b_schema['type'][1], 'com.other.Inner')
+
+    def test_acquaint_schema_accepts_nested_records_from_arrays(self):
+        fastavro.acquaint_schema({
+            'name': 'Outer',
+            'type': 'record',
+            'fields': [{
+                'name': 'multiple',
+                'type': {
+                    'type': 'array',
+                    'items': {
+                        'name': 'Nested',
+                        'type': 'record',
+                        'fields': [{'type': 'string', 'name': 'text'}],
+                    },
                 },
-            },
-        }, {
-            'name': 'single',
-            'type': {
-                'type': 'array',
-                'items': 'Nested',
-            },
-        }],
-    })
-    assert 'Nested' in fastavro._writer.get_schema_defs()
-
-
-def _check_exception(exc, substrs, quoted=False):
-    substrs = substrs if isinstance(substrs, (list, tuple)) else (substrs,)
-    if quoted:
-        return all("'%s'" % s in str(exc) for s in substrs)
-    else:
-        return all(s in str(exc) for s in substrs)
-
-
-def test_acquaint_schema_rejects_record_without_name():
-    # 'record' is a 'Named' type. Per the Avro specification, the 'name'
-    # attribute is required.
-    try:
-        fastavro.acquaint_schema({
-            'type': 'record',
-            'fields': [{'name': 'test', 'type': 'int'}],
+            }, {
+                'name': 'single',
+                'type': {
+                    'type': 'array',
+                    'items': 'Nested',
+                },
+            }],
         })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('record', 'name'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
+        self.assertIn('Nested', fastavro._writer.get_schema_defs())
 
+    def test_acquaint_schema_rejects_record_without_name(self):
+        # 'record' is a 'Named' type. Per the Avro specification, the 'name'
+        # attribute is required.
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'record',
+                'fields': [{'name': 'test', 'type': 'int'}],
+            })
+        self.check_exception(err.exception, ('record', 'name'))
 
-def test_acquaint_schema_rejects_record_without_fields():
-    # Per the Avro specification, the 'fields' attribute is required for
-    # the 'record' type
-    try:
-        fastavro.acquaint_schema({
-            'type': 'record',
-            'name': 'record_test',
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('record', 'fields'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
+    def test_acquaint_schema_rejects_record_without_fields(self):
+        # Per the Avro specification, the 'fields' attribute is required for
+        # the 'record' type
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'record',
+                'name': 'record_test',
+            })
+        self.check_exception(err.exception, ('record', 'fields'))
 
-    # However an empty list is OK
-    try:
+        # However an empty list is OK
         fastavro.acquaint_schema({
             'type': 'record',
             'name': 'record_test',
             'fields': [],
         })
-    except SchemaError:
-        assert False, 'No SchemaError should be raised'
 
+    def test_acquaint_schema_rejects_record_fields_without_name(self):
+        # Per the Avro specification, each `field` in a 'record' requires a
+        # 'name' attribute.
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'record',
+                'name': 'record_test',
+                'fields': [
+                    {'name': 'test', 'type': 'string'},
+                    {'type': 'int'},
+                ]
+            })
+        self.check_exception(err.exception, ('record', 'field', 'name'))
 
-def test_acquaint_schema_rejects_record_fields_without_name():
-    # Per the Avro specification, each `field` in a 'record' requires a
-    # 'name' attribute.
-    try:
-        fastavro.acquaint_schema({
-            'type': 'record',
-            'name': 'record_test',
-            'fields': [
-                {'name': 'test', 'type': 'string'},
-                {'type': 'int'},
-            ]
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('record', 'field', 'name'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
+    def test_acquaint_schema_rejects_record_fields_without_type(self):
+        # Per the Avro specification, each `field` in a 'record' requires a
+        # 'type' attribute.
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'record',
+                'name': 'record_test',
+                'fields': [{'name': 'test'}],
+            })
+        self.check_exception(err.exception, ('record', 'field', 'type'))
 
+    def test_acquaint_schema_rejects_enum_without_name(self):
+        # 'enum' is a 'Named' type. Per the Avro specification, the 'name'
+        # attribute is required.
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'enum',
+                'symbols': ['foo', 'bar', 'baz'],
+            })
+        self.check_exception(err.exception, ('enum', 'name'))
 
-def test_acquaint_schema_rejects_record_fields_without_type():
-    # Per the Avro specification, each `field` in a 'record' requires a
-    # 'type' attribute.
-    try:
-        fastavro.acquaint_schema({
-            'type': 'record',
-            'name': 'record_test',
-            'fields': [{'name': 'test'}],
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('record', 'field', 'type'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
+    def test_acquaint_schema_rejects_enum_without_symbols(self):
+        # Per the Avro specification, the 'symbols' attribute is required for
+        # the 'enum' type
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'enum',
+                'name': 'enum_test',
+            })
+        self.check_exception(err.exception, ('enum', 'symbols'))
 
-
-def test_acquaint_schema_rejects_enum_without_name():
-    # 'enum' is a 'Named' type. Per the Avro specification, the 'name'
-    # attribute is required.
-    try:
-        fastavro.acquaint_schema({
-            'type': 'enum',
-            'symbols': ['foo', 'bar', 'baz'],
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('enum', 'name'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
-
-
-def test_acquaint_schema_rejects_enum_without_symbols():
-    # Per the Avro specification, the 'symbols' attribute is required for
-    # the 'enum' type
-    try:
-        fastavro.acquaint_schema({
-            'type': 'enum',
-            'name': 'enum_test',
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('enum', 'symbols'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
-
-    # However an empty list is OK (maybe it should be rejected?)
-    try:
+        # However an empty list is OK (maybe it should be rejected?)
         fastavro.acquaint_schema({
             'type': 'enum',
             'name': 'enum_test',
             'symbols': [],
         })
-    except SchemaError:
-        assert False, 'No SchemaError should be raised'
 
+    def test_acquaint_schema_rejects_fixed_without_name(self):
+        # 'enum' is a 'Named' type. Per the Avro specification, the 'name'
+        # attribute is required.
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'fixed',
+                'size': 32,
+            })
+        self.check_exception(err.exception, ('fixed', 'name'))
 
-def test_acquaint_schema_rejects_fixed_without_name():
-    # 'enum' is a 'Named' type. Per the Avro specification, the 'name'
-    # attribute is required.
-    try:
-        fastavro.acquaint_schema({
-            'type': 'fixed',
-            'size': 32,
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('fixed', 'name'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
+    def test_acquaint_schema_rejects_fixed_without_size(self):
+        # Per the Avro specification, the 'size' attribute is required for
+        # the 'fixed' type
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'fixed',
+                'name': 'fixed_test',
+            })
+        self.check_exception(err.exception, ('fixed', 'size'))
 
-
-def test_acquaint_schema_rejects_fixed_without_size():
-    # Per the Avro specification, the 'size' attribute is required for
-    # the 'fixed' type
-    try:
-        fastavro.acquaint_schema({
-            'type': 'fixed',
-            'name': 'fixed_test',
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('fixed', 'size'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
-
-    # However a zero 'size' is OK (maybe it should be rejected?)
-    try:
+        # However a zero 'size' is OK (maybe it should be rejected?)
         fastavro.acquaint_schema({
             'type': 'fixed',
             'name': 'fixed_test',
             'size': 0
         })
-    except SchemaError:
-        assert False, 'No SchemaError should be raised'
 
+    def test_acquaint_schema_rejects_array_without_items(self):
+        # Per the Avro specification, the 'items' attribute is required for
+        # the 'array' type
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'array',
+            })
+        self.check_exception(err.exception, ('array', 'items'))
 
-def test_acquaint_schema_rejects_array_without_items():
-    # Per the Avro specification, the 'items' attribute is required for
-    # the 'array' type
-    try:
-        fastavro.acquaint_schema({
-            'type': 'array',
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('array', 'items'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
-
-    # However an empty list is OK (maybe it should be rejected?)
-    try:
+        # However an empty list is OK (maybe it should be rejected?)
         fastavro.acquaint_schema({
             'type': 'array',
             'items': [],
         })
-    except SchemaError:
-        assert False, 'No SchemaError should be raised'
 
+    def test_acquaint_schema_rejects_map_without_values(self):
+        # Per the Avro specification, the 'values' attribute is required for
+        # the 'map' type
+        with self.assertRaises(SchemaError) as err:
+            fastavro.acquaint_schema({
+                'type': 'map',
+            })
+        self.check_exception(err.exception, ('map', 'values'))
 
-def test_acquaint_schema_rejects_map_without_values():
-    # Per the Avro specification, the 'values' attribute is required for
-    # the 'map' type
-    try:
-        fastavro.acquaint_schema({
-            'type': 'map',
-        })
-    except SchemaError as exc:
-        check = _check_exception(exc, ('map', 'values'), True)
-        assert check, 'Incorrect SchemaError raised: %s' % exc
-    except Exception as exc:
-        raise UnexpectedException(SchemaError, exc)
-    else:
-        assert False, 'SchemaError not raised'
-
-    # However an empty list is OK (maybe it should be rejected?)
-    try:
+        # However an empty list is OK (maybe it should be rejected?)
         fastavro.acquaint_schema({
             'type': 'map',
             'values': [],
         })
-    except SchemaError:
-        assert False, 'No SchemaError should be raised'
 
 
-def test_schemaless_writer_and_reader():
-    schema = {
-        'namespace': 'test',
-        'name': 'Test',
-        'type': 'record',
-        'fields': [{
-            'name': 'field',
-            'type': {'type': 'string'},
-        }],
-    }
-    record = {'field': 'test'}
-    new_file = BytesIO()
-    fastavro.schemaless_writer(new_file, schema, record)
-    new_file.seek(0)
-    new_record = fastavro.schemaless_reader(new_file, schema)
-    assert record == new_record
+class TestSchemaMigration(unittest.TestCase):
+
+    def test_schema_migration_remove_field(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': 'string',
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [],
+        }
+        records = [{'test': 'test'}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertEqual(new_records, [{}])
+
+    def test_schema_migration_add_default_field(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': 'string',
+                'default': 'default',
+            }],
+        }
+        records = [{}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertEqual(new_records, [{'test': 'default'}])
+
+    def test_schema_migration_union_int_to_float_promotion(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['string', 'int'],
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['float', 'string'],
+            }],
+        }
+        records = [{'test': 1}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
+
+    def test_schema_migration_union_bytes_to_string_promotion(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{'name': 'test', 'type': ['int', 'bytes', 'string']}],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{'name': 'test', 'type': ['int', 'string']}],
+        }
+        byte_str = b'byte_str'
+        records = [{'test': byte_str}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertIsInstance(new_records[0]['test'], _unicode_type)
+        self.assertEqual(new_records[0]['test'], byte_str.decode('utf-8'))
+
+    def test_schema_migration_union_string_to_bytes_promotion(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{'name': 'test', 'type': ['int', 'bytes', 'string']}],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{'name': 'test', 'type': ['int', 'bytes']}],
+        }
+        unicode_str = u'unicode_str'
+        records = [{'test': unicode_str}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertIsInstance(new_records[0]['test'], _bytes_type)
+        self.assertEqual(new_records[0]['test'], unicode_str.encode('utf-8'))
+
+    def test_schema_migration_maps_with_union_promotion(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': {
+                    'type': 'map',
+                    'values': ['string', 'int'],
+                },
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': {
+                    'type': 'map',
+                    'values': ['string', 'long'],
+                },
+            }],
+        }
+        records = [{'test': {'foo': 1}}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
+
+    def test_schema_migration_array_with_union_promotion(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': {
+                    'type': 'array',
+                    'items': ['boolean', 'long'],
+                },
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': {
+                    'type': 'array',
+                    'items': ['string', 'float'],
+                },
+            }],
+        }
+        records = [{'test': [1, 2, 3]}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
+
+    def test_schema_migration_writer_union(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['string', 'int'],
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': 'int',
+            }],
+        }
+        records = [{'test': 1}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
+
+    def test_schema_migration_reader_union(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': 'int',
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['string', 'int'],
+            }],
+        }
+        records = [{'test': 1}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
+
+    def test_schema_migration_writer_and_reader_union(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['double', 'string', 'null'],
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['int', 'long', 'float', 'string'],
+            }],
+        }
+        records = [{'test': u'foo'}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
+
+    def test_schema_migration_reader_union_failure(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': 'boolean',
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['string', 'int'],
+            }],
+        }
+        records = [{'test': True}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        with self.assertRaises(SchemaResolutionError):
+            list(reader)
+
+    def test_schema_migration_writer_union_failure(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['boolean', 'string']
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': 'int'
+            }],
+        }
+        records = [{'test': u'foo'}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        with self.assertRaises(SchemaResolutionError):
+            list(reader)
+
+    def test_schema_migration_array_failure(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': {
+                    'type': 'array',
+                    'items': ['string', 'int'],
+                },
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': {
+                    'type': 'array',
+                    'items': ['string', 'boolean'],
+                },
+            }],
+        }
+        records = [{'test': [1, 2, 3]}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        with self.assertRaises(SchemaResolutionError):
+            list(reader)
+
+    def test_schema_migration_maps_failure(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': {
+                    'type': 'map',
+                    'values': 'string',
+                },
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': {
+                    'type': 'map',
+                    'values': 'long',
+                },
+            }],
+        }
+        records = [{'test': {'foo': 'a'}}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        with self.assertRaises(SchemaResolutionError):
+            list(reader)
+
+    def test_schema_migration_enum_failure(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'enum',
+            'symbols': ['FOO', 'BAR'],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'enum',
+            'symbols': ['BAZ', 'BAR'],
+        }
+        records = ['FOO']
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        with self.assertRaises(SchemaResolutionError):
+            list(reader)
+
+    def test_schema_migration_schema_mismatch(self):
+        schema = {
+            'name': 'migration_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': 'string',
+            }],
+        }
+        new_schema = {
+            'name': 'migration_test',
+            'type': 'enum',
+            'symbols': ['FOO', 'BAR'],
+        }
+        records = [{'test': 'test'}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer, new_schema)
+        with self.assertRaises(SchemaResolutionError):
+            list(reader)
 
 
-def test_default_values():
-    schema = {
-        'name': 'default_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'default_field',
-            'type': 'string',
-            'default': 'default_value',
-        }],
-    }
-    new_file = BytesIO()
-    records = [{}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file)
-    new_records = list(new_reader)
-    assert new_records == [{'default_field': 'default_value'}]
+class TestFastavro(unittest.TestCase):
 
+    def test_metadata(self):
+        schema = {
+            'name': 'metadata_test',
+            'type': 'record',
+            'fields': [],
+        }
+        records = [{}]
+        metadata = {'key': 'value'}
 
-def test_missing_value_in_record_with_no_default():
-    # See: https://github.com/tebeka/fastavro/issues/49
-    schema = {
-        'name': 'default_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': 'string',
-        }],
-    }
-    new_file = BytesIO()
-    records = [{}]
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records, metadata=metadata)
+        buffer.seek(0)
 
-    try:
-        fastavro.writer(new_file, schema, records)
-    except TypeError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(TypeError, exc)
-    else:
-        assert False, 'TypeError not raised'
+        reader = fastavro.Reader(buffer)
+        self.assertEqual(reader.metadata['key'], metadata['key'])
 
+    def test_repo_caching_issue(self):
+        schema = {
+            'name': 'B',
+            'type': 'record',
+            'fields': [{
+                'name': 'b',
+                'type': {
+                    'name': 'C',
+                    'type': 'record',
+                    'fields': [{
+                        'name': 'c',
+                        'type': 'string',
+                    }],
+                },
+            }],
+        }
+        records = [{'b': {'c': 'test'}}]
 
-def test_missing_value_in_bool_type_record_with_no_default():
-    # See: https://github.com/tebeka/fastavro/issues/49
-    schema = {
-        'name': 'default_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test_bool',
-            'type': 'boolean',
-        }],
-    }
-    new_file = BytesIO()
-    records = [{}]
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
 
-    try:
-        fastavro.writer(new_file, schema, records)
-    except TypeError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(TypeError, exc)
-    else:
-        assert False, 'TypeError not raised'
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
 
+        other_schema = {
+            'name': 'A',
+            'type': 'record',
+            'fields': [{
+                'name': 'a',
+                'type': {
+                    'name': 'B',
+                    'type': 'record',
+                    'fields': [{
+                        'name': 'b',
+                        'type': {
+                            'name': 'C',
+                            'type': 'record',
+                            'fields': [{
+                                'name': 'c',
+                                'type': 'int',
+                            }],
+                        },
+                    }],
+                },
+            }, {
+                'name': 'aa',
+                'type': 'B',
+            }],
+        }
+        records = [{'a': {'b': {'c': 1}}, 'aa': {'b': {'c': 2}}}]
 
-def test_missing_value_for_null_union_in_record_with_no_default():
-    # See: https://github.com/tebeka/fastavro/issues/49
-    schema = {
-        'name': 'default_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['int', 'null'],
-        }],
-    }
-    new_file = BytesIO()
-    records = [{}]
+        buffer = BytesIO()
+        fastavro.write(buffer, other_schema, records)
+        buffer.seek(0)
 
-    try:
-        fastavro.writer(new_file, schema, records)
-    except ValueError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(ValueError, exc)
-    else:
-        assert False, 'ValueError not raised'
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
 
+    def test_boolean_roundtrip(self):
+        schema = {
+            'name': 'boolean_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'field',
+                'type': 'boolean',
+            }],
+        }
+        records = [
+            {'field': True},
+            {'field': False},
+        ]
 
-def test_boolean_roundtrip():
-    schema = {
-        'name': 'boolean_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'field',
-            'type': 'boolean',
-        }],
-    }
-    record = {'field': True}
-    new_file = BytesIO()
-    fastavro.schemaless_writer(new_file, schema, record)
-    new_file.seek(0)
-    new_record = fastavro.schemaless_reader(new_file, schema)
-    assert record == new_record
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
 
-    record = {'field': False}
-    new_file = BytesIO()
-    fastavro.schemaless_writer(new_file, schema, record)
-    new_file.seek(0)
-    new_record = fastavro.schemaless_reader(new_file, schema)
-    assert record == new_record
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
 
+    def test_fixed_roundtrip(self):
+        schema = {
+            'name': 'fixed_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'magic',
+                'type': {'type': 'fixed', 'name': 'Magic', 'size': 4},
+            }, {
+                'name': 'stuff',
+                'type': {'type': 'fixed', 'name': 'Stuff', 'size': 8},
+            }],
+        }
+        records = [
+            {'magic': b'1234', 'stuff': random_byte_str(8)},
+            {'magic': b'xxxx', 'stuff': random_byte_str(8)},
+        ]
 
-def test_metadata():
-    schema = {
-        'name': 'metadata_test',
-        'type': 'record',
-        'fields': [],
-    }
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
 
-    new_file = BytesIO()
-    records = [{}]
-    metadata = {'key': 'value'}
-    fastavro.writer(new_file, schema, records, metadata=metadata)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file)
-    assert new_reader.metadata['key'] == metadata['key']
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
 
+    def test_bytes_roundtrip(self):
+        schema = {
+            'name': 'bytes_test',
+            'type': 'record',
+            'fields': [
+                {'name': 'test1', 'type': 'bytes'},
+                {'name': 'test2', 'type': 'bytes'},
+            ],
+        }
+        records = [
+            {'test1': b'foobar', 'test2': random_byte_str(8)},
+            {'test1': b'bizbaz', 'test2': random_byte_str(8)},
+        ]
 
-def test_repo_caching_issue():
-    schema = {
-        'name': 'B',
-        'type': 'record',
-        'fields': [{
-            'name': 'b',
-            'type': {
-                'name': 'C',
-                'type': 'record',
-                'fields': [{
-                    'name': 'c',
-                    'type': 'string',
-                }],
-            },
-        }],
-    }
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
 
-    new_file = BytesIO()
-    records = [{'b': {'c': 'test'}}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file)
-    new_records = list(new_reader)
-    assert new_records == records
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
 
-    other_schema = {
-        'name': 'A',
-        'type': 'record',
-        'fields': [{
-            'name': 'a',
-            'type': {
-                'name': 'B',
-                'type': 'record',
-                'fields': [{
-                    'name': 'b',
-                    'type': {
-                        'name': 'C',
-                        'type': 'record',
-                        'fields': [{
-                            'name': 'c',
-                            'type': 'int',
-                        }],
-                    },
-                }],
-            },
+    def test_string_roundtrip(self):
+        schema = {
+            'name': 'string_test',
+            'type': 'record',
+            'fields': [
+                {'name': 'test1', 'type': 'string'},
+                {'name': 'test2', 'type': 'string'},
+            ],
+        }
+        records = [
+            {'test1': u'foobar', 'test2': random_unicode_str(20)},
+            {'test1': u'bizbaz', 'test2': random_unicode_str(20)},
+        ]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
+
+    def test_string_with_non_unicode_values_roundtrip(self):
+        schema = {
+            'name': 'string_test',
+            'type': 'record',
+            'fields': [
+                {'name': 'test1', 'type': 'string'},
+                {'name': 'test2', 'type': 'string'},
+            ],
+        }
+        records = [{
+            'test1': b'Obviously safe ascii string',
+            # UTF-8 encoded Cyrillic chars
+            'test2': b'\xd0\xb1\xd1\x8b\xd1\x81\xd1\x82\xd1\x80\xd1\x8b\xd0\xb9',  # noqa
         }, {
-            'name': 'aa',
-            'type': 'B',
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'a': {'b': {'c': 1}}, 'aa': {'b': {'c': 2}}}]
-    fastavro.writer(new_file, other_schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file)
-    new_records = list(new_reader)
-    assert new_records == records
-
-
-def test_schema_migration_remove_field():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': 'string',
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': 'test'}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert new_records == [{}]
-
-
-def test_schema_migration_add_default_field():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': 'string',
-            'default': 'default',
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert new_records == [{'test': 'default'}]
-
-
-def test_schema_migration_union_int_to_float_promotion():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['string', 'int'],
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['float', 'string'],
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': 1}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert new_records == records
-
-
-def test_schema_migration_union_bytes_to_string_promotion():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{'name': 'test', 'type': ['int', 'bytes', 'string']}],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{'name': 'test', 'type': ['int', 'string']}],
-    }
-
-    new_file = BytesIO()
-    byte_str = b'byte_str'
-    records = [{'test': byte_str}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert isinstance(new_records[0]['test'], _unicode_type)
-    assert new_records[0]['test'] == byte_str.decode('utf-8')
-
-
-def test_schema_migration_union_string_to_bytes_promotion():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{'name': 'test', 'type': ['int', 'bytes', 'string']}],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{'name': 'test', 'type': ['int', 'bytes']}],
-    }
-
-    new_file = BytesIO()
-    unicode_str = u'unicode_str'
-    records = [{'test': unicode_str}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert isinstance(new_records[0]['test'], _bytes_type)
-    assert new_records[0]['test'] == unicode_str.encode('utf-8')
-
-
-def test_schema_migration_maps_with_union_promotion():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': {
-                'type': 'map',
-                'values': ['string', 'int'],
-            },
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': {
-                'type': 'map',
-                'values': ['string', 'long'],
-            },
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': {'foo': 1}}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert new_records == records
-
-
-def test_schema_migration_array_with_union_promotion():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': {
-                'type': 'array',
-                'items': ['boolean', 'long'],
-            },
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': {
-                'type': 'array',
-                'items': ['string', 'float'],
-            },
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': [1, 2, 3]}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert new_records == records
-
-
-def test_schema_migration_writer_union():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['string', 'int'],
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': 'int',
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': 1}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert new_records == records
-
-
-def test_schema_migration_reader_union():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': 'int',
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['string', 'int'],
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': 1}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert new_records == records
-
-
-def test_schema_migration_writer_and_reader_union():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['double', 'string', 'null'],
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['int', 'long', 'float', 'string'],
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': u'foo'}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    new_records = list(new_reader)
-    assert new_records == records
-
-
-def test_schema_migration_reader_union_failure():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': 'boolean',
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['string', 'int'],
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': True}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    try:
-        list(new_reader)
-    except SchemaResolutionError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(SchemaResolutionError, exc)
-    else:
-        assert False, 'SchemaResolutionError not raised'
-
-
-def test_schema_migration_writer_union_failure():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': ['boolean', 'string']
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': 'int'
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': u'foo'}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    try:
-        list(new_reader)
-    except SchemaResolutionError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(SchemaResolutionError, exc)
-    else:
-        assert False, 'SchemaResolutionError not raised'
-
-
-def test_schema_migration_array_failure():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': {
-                'type': 'array',
-                'items': ['string', 'int'],
-            },
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': {
-                'type': 'array',
-                'items': ['string', 'boolean'],
-            },
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': [1, 2, 3]}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    try:
-        list(new_reader)
-    except SchemaResolutionError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(SchemaResolutionError, exc)
-    else:
-        assert False, 'SchemaResolutionError not raised'
-
-
-def test_schema_migration_maps_failure():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': {
-                'type': 'map',
-                'values': 'string',
-            },
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': {
-                'type': 'map',
-                'values': 'long',
-            },
-        }],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': {'foo': 'a'}}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    try:
-        list(new_reader)
-    except SchemaResolutionError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(SchemaResolutionError, exc)
-    else:
-        assert False, 'SchemaResolutionError not raised'
-
-
-def test_schema_migration_enum_failure():
-    schema = {
-        'name': 'migration_test',
-        'type': 'enum',
-        'symbols': ['FOO', 'BAR'],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'enum',
-        'symbols': ['BAZ', 'BAR'],
-    }
-
-    new_file = BytesIO()
-    records = ['FOO']
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    try:
-        list(new_reader)
-    except SchemaResolutionError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(SchemaResolutionError, exc)
-    else:
-        assert False, 'SchemaResolutionError not raised'
-
-
-def test_schema_migration_schema_mismatch():
-    schema = {
-        'name': 'migration_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'test',
-            'type': 'string',
-        }],
-    }
-
-    new_schema = {
-        'name': 'migration_test',
-        'type': 'enum',
-        'symbols': ['FOO', 'BAR'],
-    }
-
-    new_file = BytesIO()
-    records = [{'test': 'test'}]
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-    new_reader = fastavro.reader(new_file, new_schema)
-    try:
-        list(new_reader)
-    except SchemaResolutionError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(SchemaResolutionError, exc)
-    else:
-        assert False, 'SchemaResolutionError not raised'
-
-
-def test_empty():
-    io = BytesIO()
-    schema = {
-        'name': 'test',
-        'type': 'record',
-        'fields': [
-            {'type': 'boolean', 'name': 'a'},
-        ],
-    }
-    try:
-        fastavro.load(io, schema)
-    except ReadError:
-        pass
-    except Exception as exc:
-        raise UnexpectedException(ReadError, exc)
-    else:
-        assert False, 'ReadError not raised: Read from an empty file'
-
-
-def test_fixed_roundtrip():
-    schema = {
-        'name': 'fixed_test',
-        'type': 'record',
-        'fields': [{
-            'name': 'magic',
-            'type': {'type': 'fixed', 'name': 'Magic', 'size': 4},
-        }, {
-            'name': 'stuff',
-            'type': {'type': 'fixed', 'name': 'Stuff', 'size': 8},
-        }],
-    }
-
-    records = [
-        {'magic': b'1234', 'stuff': random_byte_str(8)},
-        {'magic': b'xxxx', 'stuff': random_byte_str(8)},
-    ]
-    new_file = BytesIO()
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-
-    reader = fastavro.reader(new_file)
-    new_records = list(reader)
-    assert new_records == records
-
-
-def test_bytes_roundtrip():
-    schema = {
-        'name': 'bytes_test',
-        'type': 'record',
-        'fields': [
-            {'name': 'test1', 'type': 'bytes'},
-            {'name': 'test2', 'type': 'bytes'},
-        ],
-    }
-
-    records = [
-        {'test1': b'foobar', 'test2': random_byte_str(8)},
-        {'test1': b'bizbaz', 'test2': random_byte_str(8)},
-    ]
-    new_file = BytesIO()
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-
-    reader = fastavro.reader(new_file)
-    new_records = list(reader)
-    assert new_records == records
-
-
-def test_string_roundtrip():
-    schema = {
-        'name': 'string_test',
-        'type': 'record',
-        'fields': [
-            {'name': 'test1', 'type': 'string'},
-            {'name': 'test2', 'type': 'string'},
-        ],
-    }
-
-    records = [
-        {'test1': u'foobar', 'test2': random_unicode_str(20)},
-        {'test1': u'bizbaz', 'test2': random_unicode_str(20)},
-    ]
-    new_file = BytesIO()
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-
-    reader = fastavro.reader(new_file)
-    new_records = list(reader)
-    assert new_records == records
-
-
-def test_string_with_non_unicode_values_roundtrip():
-    schema = {
-        'name': 'string_test',
-        'type': 'record',
-        'fields': [
-            {'name': 'test1', 'type': 'string'},
-            {'name': 'test2', 'type': 'string'},
-        ],
-    }
-
-    records = [{
-        'test1': b'Obviously safe ascii string',
-        # UTF-8 encoded Cyrillic chars
-        'test2': b'\xd0\xb1\xd1\x8b\xd1\x81\xd1\x82\xd1\x80\xd1\x8b\xd0\xb9',
-    }, {
-        'test1': b'Not\x09Obviously\x0AUTF-8 Safe',
-        # UTF-8 encoded Greek chars
-        'test2': b'\xce\xb3\xcf\x81\xce\xae\xce\xb3\xce\xbf\xcf\x81\xce\xbf\xcf\x82',  # noqa
-    }]
-    new_file = BytesIO()
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-
-    # Decode binary strings for result comparison
-    for r, k, v in ((r, k, v) for r in records for k, v in r.items()):
-        r[k] = v.decode('utf-8')
-
-    reader = fastavro.reader(new_file)
-    new_records = list(reader)
-    assert new_records == records
-
-
-def test_float_double_roundtrip():
-    schema = {
-        'name': 'float_test',
-        'type': 'record',
-        'fields': [
-            {'name': 'float', 'type': 'float'},
-            {'name': 'double', 'type': 'double'},
-        ],
-    }
-
-    records = [
-        {'float': 3.141592654, 'double': 3.141592654},
-        {'float': 2.718281828, 'double': 2.718281828},
-    ]
-    new_file = BytesIO()
-    fastavro.writer(new_file, schema, records)
-    new_file.seek(0)
-
-    reader = fastavro.reader(new_file)
-    new_records = list(reader)
-    for n, r in zip(new_records, records):
-        diff_float = abs(n['float'] - r['float'])
-        diff_double = abs(n['double'] - r['double'])
-        # This is a bit arbitrary I guess:
-        assert diff_float < 0.001 and diff_double < 0.0001
+            'test1': b'Not\x09Obviously\x0AUTF-8 Safe',
+            # UTF-8 encoded Greek chars
+            'test2': b'\xce\xb3\xcf\x81\xce\xae\xce\xb3\xce\xbf\xcf\x81\xce\xbf\xcf\x82',  # noqa
+        }]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        # Decode binary strings for result comparison
+        for r, k, v in ((r, k, v) for r in records for k, v in r.items()):
+            r[k] = v.decode('utf-8')
+
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        self.assertEqual(new_records, records)
+
+    def test_float_roundtrip(self):
+        schema = {
+            'name': 'float_test',
+            'type': 'record',
+            'fields': [
+                {'name': 'test', 'type': 'float'},
+            ],
+        }
+        records = [
+            {'test': 3.141592653589793},
+            {'test': 2.718281828459045},
+            {'test': 3141.592653589793},
+            {'test': 2718.281828459045},
+        ]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        for n, r in zip(new_records, records):
+            # The `places=3` arg is a bit arbitrary I guess
+            self.assertAlmostEqual(n['test'], r['test'], places=3)
+
+    def test_double_roundtrip(self):
+        schema = {
+            'name': 'double_test',
+            'type': 'record',
+            'fields': [
+                {'name': 'test', 'type': 'double'},
+            ],
+        }
+        records = [
+            {'test': 3.141592653589793},
+            {'test': 2.718281828459045},
+            {'test': 31415926.53589793},
+            {'test': 27182818.28459045},
+        ]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        for n, r in zip(new_records, records):
+            # The `places=6` arg is a bit arbitrary I guess
+            self.assertAlmostEqual(n['test'], r['test'], places=6)
+
+    def test_record_default_value(self):
+        schema = {
+            'name': 'default_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'default_field',
+                'type': 'string',
+                'default': 'default_value',
+            }],
+        }
+        records = [{}]
+        expected = [{'default_field': 'default_value'}]
+
+        buffer = BytesIO()
+        fastavro.write(buffer, schema, records)
+        buffer.seek(0)
+
+        reader = fastavro.Reader(buffer)
+        new_records = list(reader)
+        self.assertEqual(new_records, expected)
+
+    def test_missing_value_for_string_type_record_with_no_default(self):
+        # See: https://github.com/tebeka/fastavro/issues/49
+        schema = {
+            'name': 'default_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': 'string',
+            }],
+        }
+        records = [{}]
+
+        buffer = BytesIO()
+        with self.assertRaises(TypeError):
+            fastavro.write(buffer, schema, records)
+
+    def test_missing_value_for_bool_type_record_with_no_default(self):
+        # See: https://github.com/tebeka/fastavro/issues/49
+        schema = {
+            'name': 'default_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test_bool',
+                'type': 'boolean',
+            }],
+        }
+        records = [{}]
+
+        buffer = BytesIO()
+        with self.assertRaises(TypeError):
+            fastavro.write(buffer, schema, records)
+
+    def test_missing_value_for_null_union_type_record_with_no_default(self):
+        # See: https://github.com/tebeka/fastavro/issues/49
+        schema = {
+            'name': 'default_test',
+            'type': 'record',
+            'fields': [{
+                'name': 'test',
+                'type': ['int', 'null'],
+            }],
+        }
+        records = [{}]
+
+        buffer = BytesIO()
+        with self.assertRaises(ValueError):
+            fastavro.write(buffer, schema, records)
+
+
+class TestSchemalessReadWrite(unittest.TestCase):
+
+    def test_schemaless_writer_and_reader(self):
+        schema = {
+            'namespace': 'test',
+            'name': 'Test',
+            'type': 'record',
+            'fields': [{
+                'name': 'field',
+                'type': {'type': 'string'},
+            }],
+        }
+        record = {'field': 'test'}
+
+        buffer = BytesIO()
+        fastavro.schemaless_writer(buffer, schema, record)
+        buffer.seek(0)
+
+        new_record = fastavro.schemaless_reader(buffer, schema)
+        self.assertEqual(record, new_record)
 
 
 if __name__ == '__main__':
