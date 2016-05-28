@@ -1,9 +1,23 @@
 # -*- coding: utf-8 -*-
 # cython: c_string_type=bytes, wraparound=False
 # cython: optimize.use_switch=True, always_allow_keywords=False
-"""Simple byte buffer interface.
-This implementation is a bit faster than Python 2.x cStringIO / Python 3.x
-BytesIO. This helps to improve overall read/write speeds.
+"""
+`ByteBuffer` is a replacement for Python's cStringIO / BytesIO class.
+
+On Python 2.x, benchmarks show this implementation can write data roughly
+6-8 times faster than cStringIO.
+On Python 3.x, benchmarks show this implementation can write data roughly
+3-4 times faster than BytesIO.
+
+This speed boost improves overall read/write speeds in fastavro.
+
+`Stream` is an abstract base class representation of the API implemented by
+`ByteBuffer`.
+
+`StreamWrapper` implements a wrapper around a generic Python file-like object
+so that it presents the same API as `ByteBuffer`.
+This required as some functions in `c_writer` and `c_reader` read/write to both
+the in-memory `ByteBuffer` *and* to the file-like object provided by the user.
 """
 
 
@@ -31,7 +45,7 @@ from libc.stdlib cimport malloc, realloc, free
 
 
 cdef class Stream(object):
-    """Abstract Stream definition"""
+    """Abstract base class for `ByteBuffer` API."""
 
     def __len__(self):
         raise NotImplementedError
@@ -84,14 +98,14 @@ cdef class Stream(object):
 
 cdef class StreamWrapper(Stream):
     """
-    Wrapper for a generic Python stream object to implement the abstract
-    `Stream` API. This is required so that a generic Python stream can
-    implement the same API as the `ByteBuffer` class.
+    Wrapper for a generic Python file-like object to implement the same API as
+    the `ByteBuffer` class.
     """
 
     # NOTE: Instance attributes are defined in c_buffer.pxd
     # cdef readonly object stream
-    # cdef bytes bytes_ref
+    # cdef bytes _read_chars_ref
+    # cdef bytes _peek_chars_ref
 
     def __cinit__(self, stream):
         self.stream = stream
@@ -131,7 +145,31 @@ cdef class StreamWrapper(Stream):
         return self.stream.read(num)
 
     cdef uchar* read_chars(self, SSize_t num, SSize_t* chars_read) except <uchar*>1:
-        self.bytes_ref = data = self.stream.read(num)
+        # WARNING: This is bit of a hack.
+        # We set `self._read_chars_ref = data` because we MUST keep a reference
+        # to the `data` returned by `stream.read` that will persist AFTER this
+        # method returns. If we did not keep this reference to the `data`, the
+        # object could be garbage collected before the pointer returned by this
+        # method is accessed and read by the caller. When the object is garbage
+        # collected, it *invalidates the pointer* returned by this method. Any
+        # subsequent attempt to access memory with that pointer could result in
+        # a segmentation fault.
+        # As such, the caller *must* use the pointer to read from memory
+        # *before* calling this method again.
+        #
+        # In other words, the following pattern IS NOT SAFE:
+        #   >>> ptr_1 = obj.read_chars(10, &data_len_1)
+        #   >>> ptr_2 = obj.read_chars(20, &data_len_2)
+        #   >>> byte_data_1 = ptr_1[:data_len_1]
+        #   >>> byte_data_2 = ptr_2[:data_len_2]
+        #
+        # Instead, read the value from memory before calling the method again:
+        #   >>> ptr_1 = obj.read_chars(10, &data_len_1)
+        #   >>> byte_data_1 = ptr_1[:data_len_1]
+        #   >>> ptr_2 = obj.read_chars(10, &data_len_2)
+        #   >>> byte_data_2 = ptr_2[:data_len_2]
+
+        self._read_chars_ref = data = self.stream.read(num)
         cdef SSize_t data_len = len(data)
         cdef uchar* buf
 
@@ -147,7 +185,12 @@ cdef class StreamWrapper(Stream):
         return data
 
     cdef uchar* peek_chars(self, SSize_t num, SSize_t* chars_read) except <uchar*>1:
-        self.bytes_ref = data = self.stream.read(num)
+        # WARNING: This is bit of a hack.
+        # We set `self._peek_chars_ref = data` because we MUST keep a reference
+        # to the `data` returned by `stream.read` that will persist AFTER this
+        # method returns. SEE the full explanation above in `read_chars()`
+
+        self._peek_chars_ref = data = self.stream.read(num)
         cdef SSize_t data_len = len(data)
         cdef uchar* buf
 
@@ -175,6 +218,14 @@ cdef class StreamWrapper(Stream):
 @cython.initializedcheck(False)
 @cython.nonecheck(False)
 cdef class ByteBuffer(Stream):
+    """
+    Replacement for Python's cStringIO / BytesIO class.
+
+    On Python 2.x, benchmarks show this implementation can write data roughly
+    6-8 times faster than cStringIO.
+    On Python 3.x, benchmarks show this implementation can write data roughly
+    3-4 times faster than BytesIO.
+    """
 
     # NOTE: Instance attributes are defined in c_buffer.pxd
     # cdef uchar *buf

@@ -34,7 +34,8 @@ cdef class StreamWrapper(Stream):
 
     # NOTE: Instance attributes are defined here, NOT in c_buffer.pyx
     cdef readonly object stream
-    cdef bytes bytes_ref
+    cdef bytes _read_chars_ref
+    cdef bytes _peek_chars_ref
 
     # Methods
     cdef SSize_t size(self) except -1
