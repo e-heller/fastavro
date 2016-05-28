@@ -43,13 +43,11 @@ cc_opts = -fwrapv -fno-strict-aliasing
 
 cc_include = $(PY_INCLUDE)
 
-cc_optimize = -O3 -fomit-frame-pointer
+cc_optimize = -O3 -ffast-math
 
-ld_args  = -pthread -shared -DNDEBUG -Wl,-O1
+ld_args  = -pthread -shared -Wl,-O1
 
-ld_debug = $(cc_debug)
-
-ld_link = -lm
+ld_link =
 
 
 #------ Build Rules
@@ -61,7 +59,7 @@ ld_link = -lm
 	$(CC) $(cc_args) $(cc_debug) $(cc_warnings) $(cc_opts) $(cc_optimize) $(cc_include) -c $< -o $@
 
 %$(PY_SO_SUFFIX): %.o
-	$(CC) $(ld_args) $(ld_debug) $(ld_link) $< -o $@
+	$(CC) $(ld_args) $(ld_link) $< -o $@
 
 # Build directly with `cythonize`
 %$(PY_SO_SUFFIX): %.pyx
