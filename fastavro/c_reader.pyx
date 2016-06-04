@@ -34,12 +34,12 @@ from . c_utils cimport (
     Endianness, little, big, unknown, error, get_float_format,
     get_double_format,
 )
-from . c_schema import (
-    HEADER_SCHEMA, MAGIC, SYNC_SIZE, PRIMITIVE_TYPES, AVRO_TYPES,
-)
-from . c_schema cimport extract_named_schemas_into_repo
 from . c_buffer cimport (
     Stream, StreamWrapper, ByteBuffer, cSEEK_CUR, SSize_t, uchar,
+)
+from . schema import (
+    normalize_schema, extract_named_schemas, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
+    PRIMITIVE_TYPES, AVRO_TYPES,
 )
 
 include 'c_compat.pxi'
@@ -519,27 +519,42 @@ cdef Py_hash_t h_error_union = hash('error_union')
 cdef Py_hash_t h_error = hash('error')
 
 
-cdef dict READERS = {
-    # Primitive types
-    'null': read_null,
-    'boolean': read_boolean,
-    'int': read_int,
-    'long': read_long,
-    'float': read_float,
-    'double': read_double,
-    'bytes': read_bytes,
-    'string': read_string,
+cdef dict READERS = {}
 
-    # Complex types
-    'fixed': read_fixed,
-    'enum': read_enum,
-    'array': read_array,
-    'map': read_map,
-    'union': read_union,
-    'record': read_record,
-    'error': read_record,
-    'error_union': read_union,
-}
+
+def reset_reader_funcs():
+    """Reset the Reader functions to their original state."""
+    # This function is callable from Python
+    READERS.clear()
+    READERS.update({
+        # Primitive types
+        'null': read_null,
+        'boolean': read_boolean,
+        'int': read_int,
+        'long': read_long,
+        'float': read_float,
+        'double': read_double,
+        'bytes': read_bytes,
+        'string': read_string,
+
+        # Complex types
+        'fixed': read_fixed,
+        'enum': read_enum,
+        'array': read_array,
+        'map': read_map,
+        'union': read_union,
+        'record': read_record,
+        'error': read_record,
+        'error_union': read_union,
+    })
+
+reset_reader_funcs()
+
+
+def get_reader_funcs():
+    """Return the registered Reader functions."""
+    # This function is callable from Python
+    return READERS
 
 
 cpdef py_read_data(stream, writer_schema, reader_schema=None):
@@ -684,10 +699,19 @@ cdef skip_sync(Stream stream, sync_marker):
 
 # ---- Schema Handling -------------------------------------------------------#
 
-cdef dict SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
+SCHEMA_DEFS = {}
 
 
-cpdef get_schema_defs():
+def reset_schema_defs():
+    """Reset the registered schema definitions to their original state."""
+    # This function is callable from Python
+    SCHEMA_DEFS.clear()
+    SCHEMA_DEFS.update((typ, typ) for typ in PRIMITIVE_TYPES)
+
+reset_schema_defs()
+
+
+def get_schema_defs():
     """Return the registered schema definitions."""
     # This function is callable from Python
     return SCHEMA_DEFS
@@ -700,7 +724,7 @@ def acquaint_schema(schema, repo=None, reader_schema_defs=None):
     reader_schema_defs = (
         SCHEMA_DEFS if reader_schema_defs is None else reader_schema_defs
     )
-    extract_named_schemas_into_repo(
+    extract_named_schemas(
         schema,
         repo,
         lambda schema: (
@@ -714,7 +738,7 @@ def acquaint_schema(schema, repo=None, reader_schema_defs=None):
 cdef populate_schema_defs(schema, repo):
     """Add a `schema` definition to `repo` (default SCHEMA_DEFS)"""
     repo = SCHEMA_DEFS if repo is None else repo
-    extract_named_schemas_into_repo(
+    extract_named_schemas(
         schema,
         repo,
         lambda schema: schema,
@@ -770,7 +794,9 @@ cdef class Reader(object):
         >>>         process_record(record)
         """
         self.stream = StreamWrapper(stream)
-        self.reader_schema = reader_schema
+        self.reader_schema = (
+            normalize_schema(reader_schema) if reader_schema else None
+        )
 
         self._read_header()
 
@@ -817,7 +843,7 @@ cdef class Reader(object):
             (k, v.decode('utf-8')) for k, v in iteritems(self._header['meta'])
         )
 
-        self.schema = self.writer_schema = (
+        self.schema = self.writer_schema = normalize_schema(
             json.loads(self.metadata['avro.schema'])
         )
         self.codec = self.metadata.get('avro.codec', u'null')

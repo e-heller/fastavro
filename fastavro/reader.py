@@ -28,7 +28,7 @@ except ImportError:
 
 from fastavro.compat import BytesIO, xrange, iteritems, byte2int
 from fastavro.schema import (
-    extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
+    normalize_schema, extract_named_schemas, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
     PRIMITIVE_TYPES, AVRO_TYPES,
 )
 
@@ -407,27 +407,40 @@ def read_record(stream, writer_schema, reader_schema=None):
 
 # ---- Reader function lookup ------------------------------------------------#
 
-READERS = {
-    # Primitive types
-    'null': read_null,
-    'boolean': read_boolean,
-    'int': read_int,
-    'long': read_long,
-    'float': read_float,
-    'double': read_double,
-    'bytes': read_bytes,
-    'string': read_string,
+READERS = {}
 
-    # Complex types
-    'fixed': read_fixed,
-    'enum': read_enum,
-    'array': read_array,
-    'map': read_map,
-    'union': read_union,
-    'record': read_record,
-    'error': read_record,
-    'error_union': read_union,
-}
+
+def reset_reader_funcs():
+    """Reset the Reader functions to their original state."""
+    READERS.clear()
+    READERS.update({
+        # Primitive types
+        'null': read_null,
+        'boolean': read_boolean,
+        'int': read_int,
+        'long': read_long,
+        'float': read_float,
+        'double': read_double,
+        'bytes': read_bytes,
+        'string': read_string,
+
+        # Complex types
+        'fixed': read_fixed,
+        'enum': read_enum,
+        'array': read_array,
+        'map': read_map,
+        'union': read_union,
+        'record': read_record,
+        'error': read_record,
+        'error_union': read_union,
+    })
+
+reset_reader_funcs()
+
+
+def get_reader_funcs():
+    """Return the registered Reader functions."""
+    return READERS
 
 
 def read_data(stream, writer_schema, reader_schema=None):
@@ -512,7 +525,15 @@ def skip_sync(stream, sync_marker):
 
 # ---- Schema Handling -------------------------------------------------------#
 
-SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
+SCHEMA_DEFS = {}
+
+
+def reset_schema_defs():
+    """Reset the registered schema definitions to their original state."""
+    SCHEMA_DEFS.clear()
+    SCHEMA_DEFS.update((typ, typ) for typ in PRIMITIVE_TYPES)
+
+reset_schema_defs()
 
 
 def get_schema_defs():
@@ -526,7 +547,7 @@ def acquaint_schema(schema, repo=None, reader_schema_defs=None):
     reader_schema_defs = (
         SCHEMA_DEFS if reader_schema_defs is None else reader_schema_defs
     )
-    extract_named_schemas_into_repo(
+    extract_named_schemas(
         schema,
         repo,
         lambda schema: (
@@ -540,7 +561,7 @@ def acquaint_schema(schema, repo=None, reader_schema_defs=None):
 def populate_schema_defs(schema, repo=None):
     """Add a `schema` definition to `repo` (default SCHEMA_DEFS)"""
     repo = SCHEMA_DEFS if repo is None else repo
-    extract_named_schemas_into_repo(
+    extract_named_schemas(
         schema,
         repo,
         lambda schema: schema,
@@ -580,7 +601,9 @@ class Reader(object):
         >>>         process_record(record)
         """
         self.stream = stream
-        self.reader_schema = reader_schema
+        self.reader_schema = (
+            normalize_schema(reader_schema) if reader_schema else None
+        )
 
         self._read_header()
 
@@ -627,7 +650,7 @@ class Reader(object):
             (k, v.decode('utf-8')) for k, v in iteritems(self._header['meta'])
         )
 
-        self.schema = self.writer_schema = (
+        self.schema = self.writer_schema = normalize_schema(
             json.loads(self.metadata['avro.schema'])
         )
         self.codec = self.metadata.get('avro.codec', u'null')

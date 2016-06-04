@@ -33,8 +33,8 @@ from fastavro.compat import (
     _bytes_type, _string_types,
 )
 from fastavro.schema import (
-    extract_named_schemas_into_repo, HEADER_SCHEMA, MAGIC, SYNC_SIZE,
-    SYNC_INTERVAL, PRIMITIVE_TYPES,
+    normalize_schema, extract_named_schemas,
+    HEADER_SCHEMA, MAGIC, SYNC_SIZE, SYNC_INTERVAL, PRIMITIVE_TYPES,
 )
 
 
@@ -341,27 +341,40 @@ def validate(datum, schema):
 
 # ---- Writer function lookup ------------------------------------------------#
 
-WRITERS = {
-    # Primitive types
-    'null': write_null,
-    'boolean': write_boolean,
-    'int': write_int,
-    'long': write_long,
-    'float': write_float,
-    'double': write_double,
-    'bytes': write_bytes,
-    'string': write_string,
+WRITERS = {}
 
-    # Complex types
-    'fixed': write_fixed,
-    'enum': write_enum,
-    'array': write_array,
-    'map': write_map,
-    'union': write_union,
-    'record': write_record,
-    'error': write_record,
-    'error_union': write_union,
-}
+
+def reset_writer_funcs():
+    """Reset the Writer functions to their original state."""
+    WRITERS.clear()
+    WRITERS.update({
+        # Primitive types
+        'null': write_null,
+        'boolean': write_boolean,
+        'int': write_int,
+        'long': write_long,
+        'float': write_float,
+        'double': write_double,
+        'bytes': write_bytes,
+        'string': write_string,
+
+        # Complex types
+        'fixed': write_fixed,
+        'enum': write_enum,
+        'array': write_array,
+        'map': write_map,
+        'union': write_union,
+        'record': write_record,
+        'error': write_record,
+        'error_union': write_union,
+    })
+
+reset_writer_funcs()
+
+
+def get_writer_funcs():
+    """Return the registered Writer functions."""
+    return WRITERS
 
 
 def write_data(stream, datum, schema):
@@ -415,7 +428,15 @@ def snappy_write_block(stream, block_bytes):
 
 # ---- Schema Handling -------------------------------------------------------#
 
-SCHEMA_DEFS = dict((typ, typ) for typ in PRIMITIVE_TYPES)
+SCHEMA_DEFS = {}
+
+
+def reset_schema_defs():
+    """Reset the registered schema definitions to their original state."""
+    SCHEMA_DEFS.clear()
+    SCHEMA_DEFS.update((typ, typ) for typ in PRIMITIVE_TYPES)
+
+reset_schema_defs()
 
 
 def get_schema_defs():
@@ -426,14 +447,14 @@ def get_schema_defs():
 def acquaint_schema(schema, repo=None):
     """Extract `schema` into `repo` (default WRITERS)"""
     repo = WRITERS if repo is None else repo
-    extract_named_schemas_into_repo(
+    extract_named_schemas(
         schema,
         repo,
         lambda schema: (
             lambda stream, datum, _: write_data(stream, datum, schema)
         ),
     )
-    extract_named_schemas_into_repo(
+    extract_named_schemas(
         schema,
         SCHEMA_DEFS,
         lambda schema: schema,
@@ -535,6 +556,7 @@ def writer(
     write_header(stream, metadata, sync_marker)
 
     # Register the schema
+    schema = normalize_schema(schema)
     acquaint_schema(schema)
 
     buf = BytesIO()
