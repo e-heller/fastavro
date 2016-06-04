@@ -1,14 +1,17 @@
-fastavro is a derivative work of Apache AVRO, below is the original NOTICE.txt
-from the Apache Avro (http://svn.apache.org/viewvc/avro/trunk)
+`fastavro` is a derivative work of Apache Avro.
 
-------------------------------------------------------------
+Apache Avro is licensed under the Apache License, Version 2.0
+    https://www.apache.org/licenses/LICENSE-2.0
+
+Apache Avro, Avro, and Apache are trademarks of The Apache Software Foundation.
+
+Below is the NOTICE.txt from Apache Avro as applies to this work:
+    https://svn.apache.org/viewvc/avro/trunk/lang/py/src/avro/NOTICE?view=co
+
+-------------------------------------------------------------------------------
 Apache Avro
-Copyright 2010 The Apache Software Foundation
+Copyright 2010-2015 The Apache Software Foundation
 
 This product includes software developed at
 The Apache Software Foundation (http://www.apache.org/).
-
-C JSON parsing provided by Jansson and
-written by Petri Lehtinen. The original software is
-available from http://www.digip.org/jansson/.
-------------------------------------------------------------
+-------------------------------------------------------------------------------
