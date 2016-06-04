@@ -72,7 +72,6 @@ def _extensions(*module_names):
 ext_modules = _extensions(
     'c_reader',
     'c_writer',
-    'c_schema',
     'c_utils',
     'c_buffer',
 )
