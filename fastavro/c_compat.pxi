@@ -28,8 +28,6 @@ else:
     _string_types = (bytes, str)
     _int_types = (int,)
     _number_types = (int, float)
-    #import operator
-    #byte2int = operator.itemgetter(0)
     byte2int = lambda b: b[0]
 
 cdef inline iteritems(obj):
