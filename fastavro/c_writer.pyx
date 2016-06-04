@@ -40,7 +40,7 @@ from . c_utils cimport (
 )
 from . c_buffer cimport Stream, StreamWrapper, ByteBuffer, SSize_t, uchar
 from . schema import (
-    normalize_schema, extract_named_schemas,
+    normalize_schema, extract_named_schemas, decode_bytes_in_schema,
     HEADER_SCHEMA, MAGIC, SYNC_SIZE, SYNC_INTERVAL, PRIMITIVE_TYPES,
 )
 
@@ -727,10 +727,13 @@ cdef writer(
     else:
         raise ValueError('Unknown codec: %r' % codec)
 
+    # Decode `bytes` values in `schema` so `json.dumps` won't fail
+    decoded_schema = decode_bytes_in_schema(schema)
+
     # Write Avro header
     sync_marker = urandom(SYNC_SIZE)
     metadata['avro.codec'] = codec
-    metadata['avro.schema'] = json.dumps(schema)
+    metadata['avro.schema'] = json.dumps(decoded_schema)
     write_header(stream, metadata, sync_marker)
 
     # Register the schema

@@ -160,8 +160,7 @@ class UnknownTypeError(InvalidTypeError):
 # ---- Schema Parsing --------------------------------------------------------#
 
 def normalize_schema(schema, parent_ns=None):
-    """
-    Normalize `schema` using the parent namespace `parent_ns`
+    """Normalize `schema` using the parent namespace `parent_ns`
         - Resolve names to full namespaced names
         - Normalize primitives expressed as `{'type': 'PRIMITIVE'}` to the
           simple form: `'PRIMITIVE'`
@@ -231,8 +230,7 @@ def normalize_schema(schema, parent_ns=None):
 
 
 def extract_named_schemas(schema, repo, transformer):
-    """
-    Extract all 'Named' schema types in `schema` into the repository `repo`
+    """Extract all 'Named' schema types in `schema` into the repository `repo`
     """
     if isinstance(schema, _string_type):
         if schema not in repo:
@@ -297,3 +295,25 @@ def verify_attribute(schema, attr, attr_type, schema_type=None):
         raise SchemaAttributeError(
             msg % (attr, schema_type, attr_value), schema, attr,
         )
+
+
+# ---- Prepare Schema for JSON Dump ------------------------------------------#
+
+def decode_bytes_in_schema(schema):
+    """Decode `bytes` values in `schema` to unicode.
+    The `json.dumps` method will fail if any bytes values cannot be decoded
+    to UTF-8. Here, we first try decoding with 'utf-8'. If that fails, then
+    default to decoding with 'raw_unicode_escape' instead.
+    """
+    _decode = decode_bytes_in_schema
+    if isinstance(schema, _bytes_type):
+        try:
+            return schema.decode('utf-8')
+        except UnicodeDecodeError:
+            return schema.decode('raw_unicode_escape')
+    elif isinstance(schema, list):
+        return [_decode(v) for v in schema]
+    elif isinstance(schema, dict):
+        return dict((_decode(k), _decode(v)) for k, v in schema.items())
+    else:
+        return schema
