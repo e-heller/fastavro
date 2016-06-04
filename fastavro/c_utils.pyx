@@ -5,6 +5,8 @@
 
 from __future__ import absolute_import
 
+import cython
+
 from libc cimport stdint
 from libc.float cimport FLT_MANT_DIG, DBL_MANT_DIG
 from libc.stdint cimport uint32_t
@@ -25,7 +27,9 @@ cdef Endianness get_double_format() except error:
     or some unknown format"""
     # Copied from the Python library: `_PyFloat_Init()` in floatobject.c
     cdef double x = 9006104071832581.0
-    if memcmp(&x, "\x43\x3f\xff\x01\x02\x03\x04\x05", 8) == 0:
+    if cython.sizeof(double) != 8:
+        return unknown
+    elif memcmp(&x, "\x43\x3f\xff\x01\x02\x03\x04\x05", 8) == 0:
         return big
     elif memcmp(&x, "\x05\x04\x03\x02\x01\xff\x3f\x43", 8) == 0:
         return little
@@ -38,7 +42,9 @@ cdef Endianness get_float_format() except error:
     or some unknown format"""
     # Copied from the Python library: `_PyFloat_Init()` in floatobject.c
     cdef float y = 16711938.0;
-    if memcmp(&y, "\x4b\x7f\x01\x02", 4) == 0:
+    if cython.sizeof(float) != 4:
+        return unknown
+    elif memcmp(&y, "\x4b\x7f\x01\x02", 4) == 0:
         return big
     elif memcmp(&y, "\x02\x01\x7f\x4b", 4) == 0:
         return little
