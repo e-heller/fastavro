@@ -35,7 +35,10 @@ except ImportError:
     snappy = None
 
 import fastavro
-from fastavro import ReadError, UnknownType, SchemaResolutionError, SchemaError
+from fastavro import (
+    ReadError, SchemaResolutionError, UnknownTypeError, InvalidTypeError,
+    SchemaAttributeError,
+)
 
 from tests.utils import (
     random_byte_str, random_unicode_str, _unicode_type, _bytes_type,
@@ -83,9 +86,18 @@ NO_DATA = set([
 ])
 
 
+def _examine_exception(self, exc, substrs, quote=True):
+    substrs = substrs if isinstance(substrs, (list, tuple)) else (substrs,)
+    self.assertTrue(
+        all(("'%s'" % s if quote else s) in str(exc) for s in substrs),
+        'Incorrect exception raised: %s' % repr(exc)
+    )
+
+
 class TestAvroFiles(unittest.TestCase):
 
     def read_write_file(self, filename):
+        fastavro.reset_schema_repository()
         with open(filename, 'rb') as input:
             reader = fastavro.Reader(input)
             self.assertTrue(hasattr(reader, 'schema'), 'Failed to read schema')
@@ -174,16 +186,17 @@ EXAMPLE_SCHEMAS = (
     # These are pairs: (schema, example datum)
     ('null', None),
     ('boolean', True),
-    ('string', u'adsfasdf09809dsf-=adsf'),
-    ('bytes', b'12345abcd'),
+    ('string', u'unicode value'),
+    ('bytes', b'\x01\xce\xb6\xcf\x89\xce\xae\xFF'),
     ('int', 1234),
-    ('long', 1234),
-    ('float', 1234.0),
-    ('double', 1234.0),
-    ({'type': 'fixed', 'name': 'TestFixed', 'size': 1}, b'B'),
+    ('long', 5678),
+    ('float', 123.456),
+    ('double', 456.789),
+    ({'type': 'fixed', 'name': 'TestFixed', 'size': 8},
+     b'\x01\xce\xb6\xcf\x89\xce\xae\xFF'),
     ({'type': 'enum', 'name': 'TestEnum', 'symbols': ['A', 'B']}, 'B'),
-    ({'type': 'array', 'items': 'long'}, [1, 3, 2]),
-    ({'type': 'map', 'values': 'long'}, {'a': 1, 'b': 3, 'c': 2}),
+    ({'type': 'array', 'items': 'int'}, [123, -456, 789]),
+    ({'type': 'map', 'values': 'long'}, {'a': -123, 'b': 456, 'c': -789}),
     (['string', 'null', 'long'], None),
     ({'type': 'record',
         'name': 'TestRecord',
@@ -211,31 +224,412 @@ DEFAULT_VALUE_TESTS = (
     ('null', None),
     ('boolean', True),
     ('string', u'foo'),
-    ('bytes', b'\x18\x01\xc2\xa0'),
-    ('int', 5),
-    ('long', 5),
-    ('float', 1.1),
-    ('double', 1.1),
-    ({'type': 'fixed', 'name': 'F', 'size': 4}, b'\x18\x01\xc2\xa0'),
+    ('bytes', b'\x01\xce\xb6\xcf\x89\xce\xae\xFF'),
+    ('int', 1234),
+    ('long', 5678),
+    ('float', 12.34),
+    ('double', 56.78),
+    ({'type': 'fixed', 'name': 'F', 'size': 8},
+     b'\x01\xce\xb6\xcf\x89\xce\xae\xFF'),
     ({'type': 'enum', 'name': 'F', 'symbols': ['FOO', 'BAR']}, u'FOO'),
-    ({'type': 'array', 'items': 'int'}, [1, 2, 3]),
-    ({'type': 'map', 'values': 'int'}, {'a': 1, 'b': 2}),
+    ({'type': 'array', 'items': 'int'}, [123, -456, 789]),
+    ({'type': 'map', 'values': 'long'}, {'a': -123, 'b': 456, 'c': -789}),
     (['int', 'null'], 5),
     ({'type': 'record', 'name': 'F', 'fields': [{'name': 'A', 'type': 'int'}]},
      {'A': 5}),
 )
+
+PRIMITIVE_TYPE_AS_DICT_TESTS = (
+    # These are pairs: (schema, example datum)
+    ({'type': 'null'}, None),
+    ({'type': 'boolean'}, True),
+    ({'type': 'string'}, u'unicode value'),
+    ({'type': 'bytes'}, b'\x01\xce\xb6\xcf\x89\xce\xae\xFF'),
+    ({'type': 'int'}, 1234),
+    ({'type': 'long'}, 5678),
+    ({'type': 'float'}, 123.456),
+    ({'type': 'double'}, 456.789),
+)
+
+
+# ---- Tests behavior of `fastavro.normalize_schema` -------------------------#
+
+class TestNormalizeSchema(unittest.TestCase):
+
+    examine_exception = _examine_exception
+
+    def setUp(self):
+        fastavro.reset_schema_repository()
+
+    def test_normalize_schema_resolves_namespaces(self):
+        schema = {
+            'namespace': 'test.record',
+            'name': 'Record',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': 'string'},
+                {'name': 'b', 'type': 'Type'},
+                {'name': 'c', 'type': 'test.other.Other'},
+            ],
+        }
+        expected = {
+            'namespace': 'test.record',
+            'name': 'test.record.Record',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': 'string'},
+                {'name': 'b', 'type': 'test.record.Type'},
+                {'name': 'c', 'type': 'test.other.Other'},
+            ],
+        }
+        self.assertEqual(fastavro.normalize_schema(schema), expected)
+
+    def test_normalize_schema_resolves_nested_namespaces(self):
+        schema = {
+            'namespace': 'test.record',
+            'name': 'Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': {
+                    'name': 'Inner', 'type': 'record',
+                    'fields': [
+                        {'name': 'Field', 'type': 'string'},
+                    ],
+                }},
+                {'name': 'b', 'type': 'Inner'},
+                {'name': 'c', 'type': 'test.record.Inner'},
+                {'name': 'd', 'type': 'test.other.Type'},
+            ],
+        }
+        expected = {
+            'namespace': 'test.record',
+            'name': 'test.record.Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': {
+                    'name': 'test.record.Inner', 'type': 'record',
+                    'fields': [
+                        {'name': 'Field', 'type': 'string'},
+                    ],
+                }},
+                {'name': 'b', 'type': 'test.record.Inner'},
+                {'name': 'c', 'type': 'test.record.Inner'},
+                {'name': 'd', 'type': 'test.other.Type'},
+            ],
+        }
+        self.assertEqual(fastavro.normalize_schema(schema), expected)
+
+    def test_normalize_schema_resolves_nested_namespaces_from_unions(self):
+        schema = {
+            'namespace': 'test.union',
+            'name': 'Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': ['null', {
+                    'name': 'Inner', 'type': 'record',
+                    'fields': [
+                        {'name': 'Field', 'type': 'string'},
+                    ],
+                }]},
+                {'name': 'b', 'type': ['null', 'Inner']},
+                {'name': 'c', 'type': 'Inner'},
+                {'name': 'd', 'type': 'test.other.Type'},
+            ],
+        }
+        expected = {
+            'namespace': 'test.union',
+            'name': 'test.union.Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': ['null', {
+                    'name': 'test.union.Inner', 'type': 'record',
+                    'fields': [
+                        {'name': 'Field', 'type': 'string'},
+                    ],
+                }]},
+                {'name': 'b', 'type': ['null', 'test.union.Inner']},
+                {'name': 'c', 'type': 'test.union.Inner'},
+                {'name': 'd', 'type': 'test.other.Type'},
+            ],
+        }
+        self.assertEqual(fastavro.normalize_schema(schema), expected)
+
+    def test_normalize_schema_resolves_nested_namespaces_from_arrays(self):
+        schema = {
+            'namespace': 'test.array',
+            'name': 'Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': {
+                    'type': 'array', 'items': {
+                        'name': 'Nested', 'type': 'record',
+                        'fields': [
+                            {'name': 'Field', 'type': 'string'},
+                        ],
+                    },
+                }},
+                {'name': 'b', 'type': {
+                    'type': 'array', 'items': 'Nested',
+                }},
+                {'name': 'c', 'type': 'Nested'},
+                {'name': 'd', 'type': 'test.array.Nested'},
+                {'name': 'e', 'type': 'test.other.Type'},
+            ],
+        }
+        expected = {
+            'namespace': 'test.array',
+            'name': 'test.array.Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': {
+                    'type': 'array', 'items': {
+                        'name': 'test.array.Nested', 'type': 'record',
+                        'fields': [
+                            {'name': 'Field', 'type': 'string'},
+                        ],
+                    },
+                }},
+                {'name': 'b', 'type': {
+                    'type': 'array', 'items': 'test.array.Nested',
+                }},
+                {'name': 'c', 'type': 'test.array.Nested'},
+                {'name': 'd', 'type': 'test.array.Nested'},
+                {'name': 'e', 'type': 'test.other.Type'},
+            ],
+        }
+        self.assertEqual(fastavro.normalize_schema(schema), expected)
+
+    def test_normalize_schema_accepts_primitives_as_dicts(self):
+        new_schema = fastavro.normalize_schema({'type': 'string'})
+        self.assertEqual(new_schema, 'string')
+
+        new_schema = fastavro.normalize_schema({
+            'type': 'array',
+            'items': {'type': 'int'},
+        })
+        self.assertEqual(new_schema, {
+            'type': 'array',
+            'items': 'int',
+        })
+
+    def test_normalize_schema_rejects_dicts_without_type(self):
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({})
+        self.examine_exception(
+            err.exception, "requires a 'type' attribute", quote=False
+        )
+
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({'name': 'test', 'values': 'int'})
+        self.examine_exception(
+            err.exception, "requires a 'type' attribute", quote=False
+        )
+
+    def test_acquaint_rejects_dicts_with_unknown_type(self):
+        with self.assertRaises(InvalidTypeError) as err:
+            fastavro.normalize_schema({'type': 'invalid'})
+        self.examine_exception(
+            err.exception, "Unknown schema type 'invalid'", quote=False
+        )
+
+        with self.assertRaises(InvalidTypeError) as err:
+            fastavro.normalize_schema({'type': 'union'})
+        self.examine_exception(
+            err.exception, "Invalid type 'union'", quote=False
+        )
+
+        with self.assertRaises(InvalidTypeError) as err:
+            fastavro.normalize_schema({
+                'type': 'array',
+                'items': {'type': 'invalid'},
+            })
+        self.examine_exception(
+            err.exception, "Unknown schema type 'invalid'", quote=False
+        )
+
+    def test_normalize_schema_rejects_record_without_name(self):
+        # 'record' is a 'Named' type. Per the Avro specification, the 'name'
+        # attribute is required.
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'record',
+                'fields': [{'name': 'test', 'type': 'int'}],
+            })
+        self.examine_exception(err.exception, ('record', 'name'))
+
+    def test_normalize_schema_rejects_record_without_fields(self):
+        # Per the Avro specification, the 'fields' attribute is required for
+        # the 'record' type
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'record',
+                'name': 'record_test',
+            })
+        self.examine_exception(err.exception, ('record', 'fields'))
+
+        # However an empty list is OK
+        fastavro.normalize_schema({
+            'type': 'record',
+            'name': 'record_test',
+            'fields': [],
+        })
+
+    def test_normalize_schema_rejects_record_fields_without_name(self):
+        # Per the Avro specification, each `field` in a 'record' requires a
+        # 'name' attribute.
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'record',
+                'name': 'record_test',
+                'fields': [
+                    {'name': 'test', 'type': 'string'},
+                    {'type': 'int'},
+                ]
+            })
+        self.examine_exception(err.exception, ('record.fields', 'name'))
+
+    def test_normalize_schema_rejects_record_fields_without_type(self):
+        # Per the Avro specification, each `field` in a 'record' requires a
+        # 'type' attribute.
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'record',
+                'name': 'record_test',
+                'fields': [{'name': 'test'}],
+            })
+        self.examine_exception(err.exception, ('record.fields', 'type'))
+
+    def test_normalize_schema_rejects_enum_without_name(self):
+        # 'enum' is a 'Named' type. Per the Avro specification, the 'name'
+        # attribute is required.
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'enum',
+                'symbols': ['foo', 'bar', 'baz'],
+            })
+        self.examine_exception(err.exception, ('enum', 'name'))
+
+    def test_normalize_schema_rejects_enum_without_symbols(self):
+        # Per the Avro specification, the 'symbols' attribute is required for
+        # the 'enum' type
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'enum',
+                'name': 'enum_test',
+            })
+        self.examine_exception(err.exception, ('enum', 'symbols'))
+
+        # However an empty list is OK (maybe it should be rejected?)
+        fastavro.normalize_schema({
+            'type': 'enum',
+            'name': 'enum_test',
+            'symbols': [],
+        })
+
+    def test_normalize_schema_rejects_fixed_without_name(self):
+        # 'enum' is a 'Named' type. Per the Avro specification, the 'name'
+        # attribute is required.
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'fixed',
+                'size': 32,
+            })
+        self.examine_exception(err.exception, ('fixed', 'name'))
+
+    def test_normalize_schema_rejects_fixed_without_size(self):
+        # Per the Avro specification, the 'size' attribute is required for
+        # the 'fixed' type
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'fixed',
+                'name': 'fixed_test',
+            })
+        self.examine_exception(err.exception, ('fixed', 'size'))
+
+        # However a zero 'size' is OK
+        fastavro.normalize_schema({
+            'type': 'fixed',
+            'name': 'fixed_test',
+            'size': 0
+        })
+
+    def test_normalize_schema_rejects_array_without_items(self):
+        # Per the Avro specification, the 'items' attribute is required for
+        # the 'array' type
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'array',
+            })
+        self.examine_exception(err.exception, ('array', 'items'))
+
+        # Rejects None, '', {}
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'array', 'values': None,
+            })
+        self.examine_exception(err.exception, ('array', 'items'))
+
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'array', 'values': '',
+            })
+        self.examine_exception(err.exception, ('array', 'items'))
+
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'array', 'values': {},
+            })
+        self.examine_exception(err.exception, ('array', 'items'))
+
+        # However an empty list is OK
+        fastavro.normalize_schema({
+            'type': 'array',
+            'items': [],
+        })
+
+    def test_normalize_schema_rejects_map_without_values(self):
+        # Per the Avro specification, the 'values' attribute is required for
+        # the 'map' type
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'map',
+            })
+        self.examine_exception(err.exception, ('map', 'values'))
+
+        # Rejects None, '', {}
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'map', 'values': None,
+            })
+        self.examine_exception(err.exception, ('map', 'values'))
+
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'map', 'values': '',
+            })
+        self.examine_exception(err.exception, ('map', 'values'))
+
+        with self.assertRaises(SchemaAttributeError) as err:
+            fastavro.normalize_schema({
+                'type': 'map', 'values': {},
+            })
+        self.examine_exception(err.exception, ('map', 'values'))
+
+        # However an empty list is OK
+        fastavro.normalize_schema({
+            'type': 'map',
+            'values': [],
+        })
 
 
 # ---- Tests behavior of `fastavro.acquaint_schema` --------------------------#
 
 class TestAcquaintSchema(unittest.TestCase):
 
-    def check_exception(self, exc, substrs):
-        substrs = substrs if isinstance(substrs, (list, tuple)) else (substrs,)
-        self.assertTrue(
-            all("'%s'" % s in str(exc) for s in substrs),
-            'Incorrect exception raised: %s' % repr(exc)
-        )
+    examine_exception = _examine_exception
+
+    def setUp(self):
+        fastavro.reset_schema_repository()
 
     def test_acquaint_schema_examples(self):
         # For un-named schema types, this only tests that the example schema
@@ -246,273 +640,124 @@ class TestAcquaintSchema(unittest.TestCase):
             with self.subTest():
                 fastavro.acquaint_schema(schema)
                 if isinstance(schema, dict) and 'name' in schema:
-                    writer_schema_defs = fastavro._writer.get_schema_defs()
-                    reader_schema_defs = fastavro._writer.get_schema_defs()
-                    self.assertIn(schema['name'], writer_schema_defs)
-                    self.assertIn(schema['name'], reader_schema_defs)
+                    schema_defs = fastavro._writer.get_schema_defs()
+                    self.assertIn(schema['name'], schema_defs)
 
     def test_acquaint_schema_rejects_undeclared_name(self):
-        with self.assertRaises(UnknownType) as err:
+        with self.assertRaises(UnknownTypeError) as err:
             fastavro.acquaint_schema({
                 'name': 'schema_test',
                 'type': 'record',
-                'fields': [{
-                    'name': 'left',
-                    'type': 'Thinger',
-                }],
+                'fields': [
+                    {'name': 'left', 'type': 'Thinger'},
+                ],
             })
-        self.assertEqual(err.exception.name, 'Thinger')
+        self.assertEqual(err.exception.schema, 'Thinger')
 
     def test_acquaint_schema_rejects_unordered_references(self):
-        with self.assertRaises(UnknownType) as err:
+        with self.assertRaises(UnknownTypeError) as err:
             fastavro.acquaint_schema({
                 'name': 'schema_test',
                 'type': 'record',
-                'fields': [{
-                    'name': 'left',
-                    'type': 'Thinger',
-                }, {
-                    'name': 'right',
-                    'type': {
+                'fields': [
+                    {'name': 'left', 'type': 'Thinger'},
+                    {'name': 'right', 'type': {
                         'name': 'Thinger',
                         'type': 'record',
-                        'fields': [{
-                            'name': 'the_thing',
-                            'type': 'string',
-                        }],
+                        'fields': [
+                            {'name': 'the_thing', 'type': 'string'},
+                        ],
+                    }},
+                ],
+            })
+        self.assertEqual(err.exception.schema, 'Thinger')
+
+    def test_acquaint_schema_handles_nested_namespaces(self):
+        schema = {
+            'namespace': 'test.record',
+            'name': 'Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': {
+                    'name': 'Inner', 'type': 'record',
+                    'fields': [
+                        {'name': 'Field', 'type': 'string'},
+                    ],
+                }},
+                {'name': 'b', 'type': 'Inner'},
+                {'name': 'c', 'type': 'test.record.Inner'},
+            ],
+        }
+        fastavro.acquaint_schema(schema)
+        schema_defs = fastavro._writer.get_schema_defs()
+        self.assertIn('test.record.Outer', schema_defs)
+        self.assertIn('test.record.Inner', schema_defs)
+        b_schema = schema_defs['test.record.Outer']['fields'][1]
+        self.assertEqual(b_schema['type'], 'test.record.Inner')
+        c_schema = schema_defs['test.record.Outer']['fields'][2]
+        self.assertEqual(c_schema['type'], 'test.record.Inner')
+
+    def test_acquaint_schema_handles_nested_namespaces_from_unions(self):
+        schema = {
+            'namespace': 'test.union',
+            'name': 'Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': ['null', {
+                    'name': 'Inner', 'type': 'record',
+                    'fields': [
+                        {'name': 'Field', 'type': 'string'},
+                    ],
+                }]},
+                {'name': 'b', 'type': ['null', 'Inner']},
+                {'name': 'c', 'type': ['test.union.Inner', 'int', 'null']},
+            ],
+        }
+        fastavro.acquaint_schema(schema)
+        schema_defs = fastavro._writer.get_schema_defs()
+        self.assertIn('test.union.Outer', schema_defs)
+        self.assertIn('test.union.Inner', schema_defs)
+        b_schema = schema_defs['test.union.Outer']['fields'][1]
+        self.assertEqual(b_schema['type'][1], 'test.union.Inner')
+        c_schema = schema_defs['test.union.Outer']['fields'][2]
+        self.assertEqual(c_schema['type'][0], 'test.union.Inner')
+
+    def test_acquaint_schema_handles_nested_namespaces_from_arrays(self):
+        schema = {
+            'namespace': 'test.array',
+            'name': 'Outer',
+            'type': 'record',
+            'fields': [
+                {'name': 'a', 'type': {
+                    'type': 'array', 'items': {
+                        'name': 'Nested', 'type': 'record',
+                        'fields': [
+                            {'name': 'Field', 'type': 'string'},
+                        ],
                     },
-                }],
-            })
-        self.assertEqual(err.exception.name, 'Thinger')
-
-    def test_acquaint_schema_accepts_nested_namespaces(self):
-        fastavro.acquaint_schema({
-            'namespace': 'com.example',
-            'name': 'Outer',
-            'type': 'record',
-            'fields': [{
-                'name': 'a',
-                'type': {
-                    'name': 'Inner',
-                    'type': 'record',
-                    'fields': [{
-                        'name': 'the_thing',
-                        'type': 'string',
-                    }],
-                },
-            }, {
-                'name': 'b',
-                # This should resolve to com.example.Inner because of the
-                # `namespace` of the enclosing record.
-                'type': 'Inner',
-            }, {
-                'name': 'b',
-                'type': 'com.example.Inner',
-            }],
-        })
-        writer_schema_defs = fastavro._writer.get_schema_defs()
-        reader_schema_defs = fastavro._writer.get_schema_defs()
-        self.assertIn('com.example.Inner', writer_schema_defs)
-        self.assertIn('com.example.Inner', reader_schema_defs)
-
-    def test_acquaint_schema_resolves_references_from_unions(self):
-        fastavro.acquaint_schema({
-            'namespace': 'com.other',
-            'name': 'Outer',
-            'type': 'record',
-            'fields': [{
-                'name': 'a',
-                'type': ['null', {
-                    'name': 'Inner',
-                    'type': 'record',
-                    'fields': [{
-                        'name': 'the_thing',
-                        'type': 'string',
-                    }],
-                }],
-            }, {
-                'name': 'b',
-                # This should resolve to com.example.Inner because of the
-                # `namespace` of the enclosing record.
-                'type': ['null', 'Inner'],
-            }],
-        })
-        writer_schema_defs = fastavro._writer.get_schema_defs()
-        reader_schema_defs = fastavro._writer.get_schema_defs()
-        self.assertIn('com.other.Outer', writer_schema_defs)
-        self.assertIn('com.other.Outer', reader_schema_defs)
-        b_w_schema = writer_schema_defs['com.other.Outer']['fields'][1]
-        self.assertEqual(b_w_schema['type'][1], 'com.other.Inner')
-        b_r_schema = reader_schema_defs['com.other.Outer']['fields'][1]
-        self.assertEqual(b_r_schema['type'][1], 'com.other.Inner')
-
-    def test_acquaint_schema_accepts_nested_records_from_arrays(self):
-        fastavro.acquaint_schema({
-            'name': 'Outer',
-            'type': 'record',
-            'fields': [{
-                'name': 'multiple',
-                'type': {
-                    'type': 'array',
-                    'items': {
-                        'name': 'Nested',
-                        'type': 'record',
-                        'fields': [{'type': 'string', 'name': 'text'}],
-                    },
-                },
-            }, {
-                'name': 'single',
-                'type': {
-                    'type': 'array',
-                    'items': 'Nested',
-                },
-            }],
-        })
-        writer_schema_defs = fastavro._writer.get_schema_defs()
-        reader_schema_defs = fastavro._writer.get_schema_defs()
-        self.assertIn('Nested', writer_schema_defs)
-        self.assertIn('Nested', reader_schema_defs)
-
-    def test_acquaint_schema_rejects_record_without_name(self):
-        # 'record' is a 'Named' type. Per the Avro specification, the 'name'
-        # attribute is required.
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'record',
-                'fields': [{'name': 'test', 'type': 'int'}],
-            })
-        self.check_exception(err.exception, ('record', 'name'))
-
-    def test_acquaint_schema_rejects_record_without_fields(self):
-        # Per the Avro specification, the 'fields' attribute is required for
-        # the 'record' type
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'record',
-                'name': 'record_test',
-            })
-        self.check_exception(err.exception, ('record', 'fields'))
-
-        # However an empty list is OK
-        fastavro.acquaint_schema({
-            'type': 'record',
-            'name': 'record_test',
-            'fields': [],
-        })
-
-    def test_acquaint_schema_rejects_record_fields_without_name(self):
-        # Per the Avro specification, each `field` in a 'record' requires a
-        # 'name' attribute.
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'record',
-                'name': 'record_test',
-                'fields': [
-                    {'name': 'test', 'type': 'string'},
-                    {'type': 'int'},
-                ]
-            })
-        self.check_exception(err.exception, ('record', 'field', 'name'))
-
-    def test_acquaint_schema_rejects_record_fields_without_type(self):
-        # Per the Avro specification, each `field` in a 'record' requires a
-        # 'type' attribute.
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'record',
-                'name': 'record_test',
-                'fields': [{'name': 'test'}],
-            })
-        self.check_exception(err.exception, ('record', 'field', 'type'))
-
-    def test_acquaint_schema_rejects_enum_without_name(self):
-        # 'enum' is a 'Named' type. Per the Avro specification, the 'name'
-        # attribute is required.
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'enum',
-                'symbols': ['foo', 'bar', 'baz'],
-            })
-        self.check_exception(err.exception, ('enum', 'name'))
-
-    def test_acquaint_schema_rejects_enum_without_symbols(self):
-        # Per the Avro specification, the 'symbols' attribute is required for
-        # the 'enum' type
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'enum',
-                'name': 'enum_test',
-            })
-        self.check_exception(err.exception, ('enum', 'symbols'))
-
-        # However an empty list is OK (maybe it should be rejected?)
-        fastavro.acquaint_schema({
-            'type': 'enum',
-            'name': 'enum_test',
-            'symbols': [],
-        })
-
-    def test_acquaint_schema_rejects_fixed_without_name(self):
-        # 'enum' is a 'Named' type. Per the Avro specification, the 'name'
-        # attribute is required.
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'fixed',
-                'size': 32,
-            })
-        self.check_exception(err.exception, ('fixed', 'name'))
-
-    def test_acquaint_schema_rejects_fixed_without_size(self):
-        # Per the Avro specification, the 'size' attribute is required for
-        # the 'fixed' type
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'fixed',
-                'name': 'fixed_test',
-            })
-        self.check_exception(err.exception, ('fixed', 'size'))
-
-        # However a zero 'size' is OK (maybe it should be rejected?)
-        fastavro.acquaint_schema({
-            'type': 'fixed',
-            'name': 'fixed_test',
-            'size': 0
-        })
-
-    def test_acquaint_schema_rejects_array_without_items(self):
-        # Per the Avro specification, the 'items' attribute is required for
-        # the 'array' type
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'array',
-            })
-        self.check_exception(err.exception, ('array', 'items'))
-
-        # However an empty list is OK (maybe it should be rejected?)
-        fastavro.acquaint_schema({
-            'type': 'array',
-            'items': [],
-        })
-
-    def test_acquaint_schema_rejects_map_without_values(self):
-        # Per the Avro specification, the 'values' attribute is required for
-        # the 'map' type
-        with self.assertRaises(SchemaError) as err:
-            fastavro.acquaint_schema({
-                'type': 'map',
-            })
-        self.check_exception(err.exception, ('map', 'values'))
-
-        # However an empty list is OK (maybe it should be rejected?)
-        fastavro.acquaint_schema({
-            'type': 'map',
-            'values': [],
-        })
+                }},
+                {'name': 'b', 'type': {
+                    'type': 'array', 'items': 'Nested',
+                }},
+                {'name': 'c', 'type': 'Nested'},
+            ],
+        }
+        fastavro.acquaint_schema(schema)
+        schema_defs = fastavro._writer.get_schema_defs()
+        self.assertIn('test.array.Outer', schema_defs)
+        self.assertIn('test.array.Nested', schema_defs)
+        b_schema = schema_defs['test.array.Outer']['fields'][1]
+        self.assertEqual(b_schema['type']['items'], 'test.array.Nested')
+        c_schema = schema_defs['test.array.Outer']['fields'][2]
+        self.assertEqual(c_schema['type'], 'test.array.Nested')
 
 
 # ---- Tests migration from a "writer's schema" to a "reader's schema" -------#
 
 class TestSchemaMigration(unittest.TestCase):
+
+    def setUp(self):
+        fastavro.reset_schema_repository()
 
     def test_schema_migration_projection(self):
         # This test is adapted from the Apache Avro 1.8.1 Python unit tests:
@@ -679,9 +924,11 @@ class TestSchemaMigration(unittest.TestCase):
             with self.subTest():
                 output = _write(writers_schema, [datum])
                 new_records = _read(output, readers_schema)
-                # Check value with `assertAlmostEqual` because of floats
                 value = new_records[0]
-                self.assertAlmostEqual(value, datum, places=5)
+                if isinstance(datum, float):
+                    self.assertAlmostEqual(value, datum, places=5)
+                else:
+                    self.assertEqual(value, datum)
 
     def test_schema_migration_union_int_to_float_promotion(self):
         writers_schema = {
@@ -1015,6 +1262,9 @@ class TestSchemaMigration(unittest.TestCase):
 
 class TestFastavro(unittest.TestCase):
 
+    def setUp(self):
+        fastavro.reset_schema_repository()
+
     def test_not_avro(self):
         with self.assertRaises(ReadError):
             with open(__file__, 'rb') as input:
@@ -1098,14 +1348,34 @@ class TestFastavro(unittest.TestCase):
         new_records = _read(output)
         self.assertEqual(new_records, records)
 
+    def test_primitve_type_as_dict(self):
+        for schema, datum in PRIMITIVE_TYPE_AS_DICT_TESTS:
+            with self.subTest():
+                output = _write(schema, [datum])
+                reader = fastavro.Reader(output)
+                new_records = list(reader)
+                self.assertEqual(len(new_records), 1)
+                if isinstance(datum, float):
+                    self.assertAlmostEqual(new_records[0], datum, places=5)
+                else:
+                    self.assertEqual(new_records[0], datum)
+                # Schema has been normalized:
+                self.assertEqual(reader.schema, schema['type'])
+
     def test_example_round_trips(self):
         # Uses the `EXAMPLE_SCHEMAS` extracted from the Apache Avro 1.8.1
         # Python unit tests:  /lang/py/test/test_io.py
         for schema, datum in EXAMPLE_SCHEMAS:
             with self.subTest():
                 output = _write(schema, [datum])
-                new_records = _read(output)
-                self.assertEqual(new_records, [datum])
+                reader = fastavro.Reader(output)
+                new_records = list(reader)
+                self.assertEqual(len(new_records), 1)
+                if isinstance(datum, float):
+                    self.assertAlmostEqual(new_records[0], datum, places=5)
+                else:
+                    self.assertEqual(new_records[0], datum)
+                self.assertEqual(reader.schema, schema)
 
     def test_boolean_roundtrip(self):
         schema = {
@@ -1315,9 +1585,11 @@ class TestFastavro(unittest.TestCase):
                 new_records = _read(output)
                 self.assertEqual(len(new_records), 1)
                 self.assertIn('Field', new_records[0])
-                # Check value with `assertAlmostEqual` because of floats
                 value = new_records[0]['Field']
-                self.assertAlmostEqual(value, default, places=5)
+                if isinstance(default, float):
+                    self.assertAlmostEqual(value, default, places=5)
+                else:
+                    self.assertEqual(value, default)
 
     def test_record_default_values(self):
         # This test is adapted from the Apache Avro 1.8.1 Python unit tests:
@@ -1339,9 +1611,11 @@ class TestFastavro(unittest.TestCase):
                 new_records = _read(output, readers_schema)
                 self.assertEqual(len(new_records), 1)
                 self.assertIn('H', new_records[0])
-                # Check value with `assertAlmostEqual` because of floats
                 value = new_records[0]['H']
-                self.assertAlmostEqual(value, default, places=5)
+                if isinstance(default, float):
+                    self.assertAlmostEqual(value, default, places=5)
+                else:
+                    self.assertEqual(value, default)
 
     def test_string_type_record_with_falsy_default_value(self):
         schema = {
@@ -1450,6 +1724,9 @@ class TestFastavro(unittest.TestCase):
 
 class TestSchemalessWriterAndReader(unittest.TestCase):
 
+    def setUp(self):
+        fastavro.reset_schema_repository()
+
     def test_schemaless_writer_and_reader(self):
         schema = {
             'namespace': 'test',
@@ -1470,15 +1747,11 @@ class TestSchemalessWriterAndReader(unittest.TestCase):
 
 
 if __name__ == '__main__':
-    import nose
-    from nose.config import Config
+    verbosity = 2
+    defaultTest = None
+    # To run a single function or class, you can set `defaultTest`:
+    # defaultTest = 'TestNormalizeSchema'
 
-    # This is useful for testing a single function in this module:
-    # (Uncomment the line below when creating the `Config`)
-    testMatchPat = r'test_some_func'
-    testMatch = re.compile(testMatchPat)
-
-    nose.runmodule(config=Config(
-        logStream=sys.stdout, stream=sys.stdout,
-        testMatchPat=testMatchPat, testMatch=testMatch,
-    ))
+    unittest.main(
+        verbosity=verbosity, defaultTest=defaultTest, catchbreak=True,
+    )
